@@ -1,8 +1,16 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from .routes import health_routes, soniox_routes
 
 app = FastAPI(title="API")
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-@app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+app.include_router(health_routes.router)
+app.include_router(soniox_routes.router)
