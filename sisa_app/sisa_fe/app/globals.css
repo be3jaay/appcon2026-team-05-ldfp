@@ -4,6 +4,19 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* SISA brand: deep space blue on an off-white canvas. */
+@theme {
+    --color-brand: #003459;
+    --color-brand-deep: #00243f;
+    --color-brand-accent: #007ea7;
+    --color-brand-sky: #00a8e8;
+    --color-canvas: #f4f6f9;
+    --color-ink: #0f1b2a;
+    --color-ink-muted: #5b6b7f;
+    --color-ink-faint: #8a97a8;
+    --color-line: #e2e7ee;
+}
+
 @theme inline {
     --font-heading: var(--font-sans);
     --font-sans: var(--font-sans);

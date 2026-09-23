@@ -1,10 +1,11 @@
 import type { TranscriptStatus } from "@/hooks/use-soniox-transcription"
 
-export type VideoSourceKind = "file" | "youtube"
+export type VideoSourceKind = "file" | "youtube" | "mic"
 
 export const VIDEO_SOURCE_TABS: { kind: VideoSourceKind; label: string }[] = [
   { kind: "file", label: "Video file" },
-  { kind: "youtube", label: "YouTube link" },
+  { kind: "youtube", label: "YouTube" },
+  { kind: "mic", label: "Microphone" },
 ]
 
 export const DEFAULT_VIDEO_SOURCE: VideoSourceKind = "file"
@@ -21,11 +22,11 @@ export const YOUTUBE_ID_PATTERN = /^[\w-]{11}$/
 export const YOUTUBE_PATH_ID_PATTERN = /^\/(?:embed|live|shorts)\/([\w-]{11})/
 
 export const VIDEO_CONTROL_LABELS: Record<TranscriptStatus, string> = {
-  idle: "Start transcribing",
+  idle: "Start",
   connecting: "Connecting…",
   live: "Stop",
   stopping: "Stopping…",
-  error: "Start transcribing",
+  error: "Start",
 }
 
 export const VIDEO_COPY = {
@@ -40,6 +41,8 @@ export const VIDEO_COPY = {
   youtubeInvalid: "That doesn't look like a YouTube link.",
   noVideo: "No video loaded",
   emptyNoMedia: "Load a video to get started…",
-  emptyReady: "Press Start transcribing to follow what's being said…",
+  emptyReady: "Press Start to follow what's being said…",
+  micReady: "Press Start and speak. Claims are detected as you talk.",
+  micLive: "Listening…",
   seekTitle: "Jump to this moment",
 } as const

@@ -10,14 +10,25 @@ import type {
   SegmentClaimStatus,
 } from "@/hooks/use-claim-detection"
 
+// Tuned for text on a light background (AA contrast for the chip labels).
 export const CLAIM_COLORS: Record<ClaimType, string> = {
-  fact: "#E8B45C",
-  legal: "#6FA8E8",
-  opinion: "#A1A1A8",
-  promise: "#7FC8A9",
-  sarcasm: "#C58AF0",
-  figurative: "#5CC8C8",
-  vague: "#D9895C",
+  fact: "#B45309",
+  legal: "#1D5FA8",
+  opinion: "#5B6B7F",
+  promise: "#207A4E",
+  sarcasm: "#7C3AED",
+  figurative: "#0E7490",
+  vague: "#BE185D",
+}
+
+export const CLAIM_LABELS: Record<ClaimType, string> = {
+  fact: "Fact",
+  legal: "Legal",
+  opinion: "Opinion",
+  promise: "Promise",
+  sarcasm: "Sarcasm",
+  figurative: "Figurative",
+  vague: "Vague",
 }
 
 const STATUS_TITLES: Partial<Record<SegmentClaimStatus, string>> = {
@@ -80,7 +91,7 @@ function ClaimMark({ claim, children }: { claim: Claim; children: ReactNode }) {
       title={describe(claim)}
       className="cursor-help rounded-[3px] px-[2px] text-inherit decoration-2 underline-offset-4"
       style={{
-        backgroundColor: `${color}26`,
+        backgroundColor: `${color}1f`,
         textDecorationLine: "underline",
         textDecorationColor: color,
       }}
@@ -90,16 +101,37 @@ function ClaimMark({ claim, children }: { claim: Claim; children: ReactNode }) {
   )
 }
 
-function ClaimChip({ claim }: { claim: Claim }) {
-  const color = CLAIM_COLORS[claim.type]
+export function ClaimTypeChip({
+  type,
+  className,
+  title,
+}: {
+  type: ClaimType
+  className?: string
+  title?: string
+}) {
+  const color = CLAIM_COLORS[type]
   return (
     <span
-      title={describe(claim)}
-      className="ml-1.5 inline-block cursor-help rounded-[4px] border px-1.5 align-middle font-mono text-[10px] leading-[16px] tracking-[0.08em] uppercase"
-      style={{ borderColor: `${color}66`, color }}
+      title={title}
+      className={cn(
+        "inline-flex items-center rounded-full px-2 font-mono text-[10px] leading-[18px] font-medium tracking-[0.06em] uppercase",
+        className
+      )}
+      style={{ backgroundColor: `${color}14`, color }}
     >
-      {claim.type}
+      {CLAIM_LABELS[type]}
     </span>
+  )
+}
+
+function ClaimChip({ claim }: { claim: Claim }) {
+  return (
+    <ClaimTypeChip
+      type={claim.type}
+      title={describe(claim)}
+      className="ml-1.5 cursor-help align-middle"
+    />
   )
 }
 
@@ -149,7 +181,7 @@ export function ClaimText({
           aria-label={STATUS_TITLES[status]}
           className={cn(
             "ml-1.5 inline-block h-[0.8em] w-[0.8em] animate-spin align-baseline",
-            status === "queued" ? "text-[#85858D]" : "text-[#6FA8E8]"
+            status === "queued" ? "text-ink-faint" : "text-brand-accent"
           )}
         >
           <title>{STATUS_TITLES[status]}</title>
@@ -158,7 +190,7 @@ export function ClaimText({
       {status === "error" ? (
         <CircleAlert
           aria-label={STATUS_TITLES.error}
-          className="ml-1.5 inline-block h-[0.8em] w-[0.8em] align-baseline text-[#E8695C]"
+          className="ml-1.5 inline-block h-[0.8em] w-[0.8em] align-baseline text-[#C2410C]"
         >
           <title>{STATUS_TITLES.error}</title>
         </CircleAlert>
@@ -178,7 +210,7 @@ export function ClaimLegend({ className }: { className?: string }) {
             className="h-[3px] w-3 rounded-full"
             style={{ backgroundColor: CLAIM_COLORS[type] }}
           />
-          {type}
+          {CLAIM_LABELS[type]}
         </span>
       ))}
     </div>
