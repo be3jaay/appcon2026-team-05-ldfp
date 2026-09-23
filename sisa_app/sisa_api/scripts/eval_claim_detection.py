@@ -1,0 +1,218 @@
+"""Evaluate claim detection against the REAL Gemini classifier (not part of CI).
+
+    cd sisa_api
+    uv run python scripts/eval_claim_detection.py                 # stream mode (realistic batching)
+    uv run python scripts/eval_claim_detection.py --mode isolated # one detector per case
+    uv run python scripts/eval_claim_detection.py --file other.json
+
+Stream mode feeds every case (context lines first) through one detector, so
+batches mix neighbouring cases like a live session does. Only claims on a
+case's own line are scored; claims on its context lines are ignored.
+"""
+
+import argparse
+import asyncio
+import json
+import sys
+from collections import Counter, defaultdict
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from src.config import settings  # noqa: E402
+from src.models.claims import CLAIM_TYPES, Claim, TranscriptSegment  # noqa: E402
+from src.services.claims.classifier import ClaimClassifier, LLMClient  # noqa: E402
+from src.services.claims.detector import ClaimDetector  # noqa: E402
+
+DEFAULT_FILE = ROOT / "data" / "eval" / "claim_detection.json"
+NONE = "none"
+
+
+def load_cases(path: Path) -> list[dict]:
+    cases = json.loads(path.read_text(encoding="utf-8"))["cases"]
+    for case in cases:
+        case.setdefault("speaker", "1")
+        case["context"] = [
+            c if isinstance(c, dict) else {"speaker": case["speaker"], "text": c} for c in case.get("context", [])
+        ]
+    return cases
+
+
+def case_segments(case: dict, clock: list[int]) -> list[TranscriptSegment]:
+    segments = []
+    for i, ctx in enumerate(case["context"]):
+        segments.append(_segment(f"{case['id']}#ctx{i}", ctx["text"], ctx.get("speaker", "1"), clock))
+    segments.append(_segment(case["id"], case["text"], case["speaker"], clock))
+    return segments
+
+
+def _segment(segment_id: str, text: str, speaker: str, clock: list[int]) -> TranscriptSegment:
+    clock[0] += 4000
+    return TranscriptSegment(segment_id=segment_id, text=text, speaker=speaker, start_ms=clock[0], end_ms=clock[0] + 3500)
+
+
+class Paced:
+    """Spaces LLM calls to stay under a requests-per-minute quota."""
+
+    def __init__(self, inner: LLMClient, rpm: float):
+        self.inner = inner
+        self.interval = 60.0 / rpm if rpm > 0 else 0.0
+        self._next = 0.0
+
+    async def generate(self, system: str, user: str, response_schema: dict | None = None) -> str:
+        loop = asyncio.get_running_loop()
+        wait = self._next - loop.time()
+        if wait > 0:
+            await asyncio.sleep(wait)
+        self._next = loop.time() + self.interval
+        return await self.inner.generate(system, user, response_schema)
+
+
+def make_llm() -> LLMClient:
+    from src.controllers.claims_controller import gemini_factory
+
+    return gemini_factory()
+
+
+def make_detector(llm: LLMClient) -> ClaimDetector:
+    return ClaimDetector(
+        ClaimClassifier(llm),
+        max_segments=settings.claims_batch_max_segments,
+        max_wait_s=3600,  # offline: batches close on size/speaker/stop, not wall time
+        context_size=settings.claims_context_segments,
+    )
+
+
+async def run(cases: list[dict], mode: str, rpm: float) -> tuple[list[Claim], set[str], int, int, int]:
+    clock = [0]
+    claims: list[Claim] = []
+    skipped: set[str] = set()
+    calls = segments = errors = 0
+    groups = [cases] if mode == "stream" else [[c] for c in cases]
+    llm = Paced(make_llm(), rpm)
+    for group in groups:
+        detector = make_detector(llm)
+        segs = [s for case in group for s in case_segments(case, clock)]
+        result = await detector.process(segs)
+        claims += result.claims
+        skipped |= {s.segment_id for s in result.skipped}
+        calls += result.llm_calls
+        errors += result.llm_errors
+        segments += len(segs)
+    return claims, skipped, calls, segments, errors
+
+
+def score(cases: list[dict], claims: list[Claim]):
+    by_segment: dict[str, list[Claim]] = defaultdict(list)
+    for c in claims:
+        by_segment[c.segment_id].append(c)
+
+    confusion: Counter[tuple[str, str]] = Counter()
+    hits: Counter[str] = Counter()
+    totals: Counter[str] = Counter()
+    misses: list[dict] = []
+    literal = {"expected": 0, "filled": 0}
+
+    for case in cases:
+        predicted = list(by_segment.get(case["id"], []))
+        expected = case["expected"]
+        unmatched_expected = []
+        for exp in expected:
+            ok_types = {exp["type"], *exp.get("also_ok", [])}
+            totals[exp["type"]] += 1
+            match = next((p for p in predicted if p.type in ok_types), None)
+            if match:
+                predicted.remove(match)
+                hits[exp["type"]] += 1
+                confusion[(exp["type"], exp["type"])] += 1
+                if exp.get("literal_claim"):
+                    literal["expected"] += 1
+                    literal["filled"] += bool(match.literal_claim)
+            else:
+                unmatched_expected.append(exp)
+        # pair what's left in order: those are confusions; leftovers are misses/extras
+        for exp in unmatched_expected:
+            got = predicted.pop(0).type if predicted else NONE
+            confusion[(exp["type"], got)] += 1
+            misses.append({"case": case, "expected": exp["type"], "got": got})
+        if not expected:
+            totals[NONE] += 1
+            if predicted:
+                for p in predicted:
+                    confusion[(NONE, p.type)] += 1
+                misses.append({"case": case, "expected": NONE, "got": ", ".join(p.type for p in predicted)})
+            else:
+                hits[NONE] += 1
+                confusion[(NONE, NONE)] += 1
+        else:
+            for p in predicted:  # extra claims on a case that had expectations
+                confusion[(NONE, p.type)] += 1
+                misses.append({"case": case, "expected": "(no more claims)", "got": p.type})
+    return hits, totals, confusion, misses, literal
+
+
+def print_report(cases, claims, skipped, calls, segments, errors, mode):
+    hits, totals, confusion, misses, literal = score(cases, claims)
+    labels = [*CLAIM_TYPES, NONE]
+
+    print(f"\n=== Claim detection eval  model={settings.gemini_model}  mode={mode}  cases={len(cases)} ===\n")
+    print("Accuracy per expected type")
+    for t in labels:
+        if totals[t]:
+            print(f"  {t:<11} {hits[t]:>3}/{totals[t]:<3} {hits[t] / totals[t]:6.1%}")
+    all_hits, all_total = sum(hits.values()), sum(totals.values())
+    print(f"  {'overall':<11} {all_hits:>3}/{all_total:<3} {all_hits / all_total:6.1%}")
+
+    print("\nConfusion matrix (rows = expected, cols = got)")
+    width = 7
+    print(" " * 12 + "".join(f"{t[:width]:>{width + 1}}" for t in labels))
+    for row in labels:
+        if not any(confusion[(row, col)] for col in labels):
+            continue
+        print(f"  {row:<10}" + "".join(f"{confusion[(row, col)] or '.':>{width + 1}}" for col in labels))
+
+    print(f"\nMisses ({len(misses)})")
+    for m in misses:
+        case = m["case"]
+        flag = " [needs context]" if case.get("needs_context") else ""
+        dropped = " [dropped by prefilter]" if case["id"] in skipped else ""
+        print(f"  - {case['id']}: expected {m['expected']}, got {m['got']}{flag}{dropped}")
+        print(f"      {case['text']}")
+
+    case_ids = {c["id"] for c in cases}
+    claim_cases = {c["id"] for c in cases if c["expected"]}
+    print("\nPrefilter")
+    print(f"  drop rate (all segments incl. context): {len(skipped)}/{segments} = {len(skipped) / segments:.1%}")
+    print(f"  dropped no-claim cases:  {len((case_ids - claim_cases) & skipped)}/{len(case_ids - claim_cases)}")
+    print(f"  dropped CLAIM cases (bad): {len(claim_cases & skipped)}/{len(claim_cases)}")
+
+    if literal["expected"]:
+        print(f"\nliteral_claim filled on matched figurative/sarcasm: {literal['filled']}/{literal['expected']}")
+    print(f"\nLLM calls: {calls} for {segments} segments = {100 * calls / segments:.1f} per 100 segments")
+    if errors:
+        print(f"WARNING: {errors} LLM call(s) FAILED (see log above); their segments are scored as missed.")
+    print()
+
+
+def main() -> int:
+    sys.stdout.reconfigure(encoding="utf-8")  # ₱ and Tagalog text on Windows consoles
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--file", type=Path, default=DEFAULT_FILE)
+    parser.add_argument("--mode", choices=["stream", "isolated"], default="stream")
+    parser.add_argument("--rpm", type=float, default=5, help="max LLM requests per minute (Gemini free tier: 5)")
+    args = parser.parse_args()
+
+    if not settings.gemini_api_key:
+        print("GEMINI_API_KEY is not set: skipping the claim detection eval (it calls the real Gemini API).")
+        print("Add it to sisa_api/.env or the environment and run again.")
+        return 0
+
+    cases = load_cases(args.file)
+    print(f"Running {len(cases)} cases against {settings.gemini_model} at <= {args.rpm:g} requests/min...")
+    print_report(cases, *asyncio.run(run(cases, args.mode, args.rpm)), args.mode)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
