@@ -113,6 +113,7 @@ class ClaimDetector:
                     }
                 )
             except ClassifierError as exc:
+                self.result.llm_errors += 1
                 logger.warning("claim classification failed: %s", exc)
                 await self._safe_emit(
                     {

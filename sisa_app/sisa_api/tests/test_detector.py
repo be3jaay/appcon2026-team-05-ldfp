@@ -92,6 +92,7 @@ async def test_llm_failure_emits_error_and_session_continues():
     errors = [m for m in emitted if m["type"] == "error"]
     assert len(errors) == 1 and errors[0]["segment_ids"] == ["3", "4", "5"]
     assert len(result.claims) == 2  # later batches still classified
+    assert result.llm_errors == 1
     assert llm.call_count == 3
 
 

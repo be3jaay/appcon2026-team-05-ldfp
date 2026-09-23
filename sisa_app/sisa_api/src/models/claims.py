@@ -40,6 +40,7 @@ class DetectionResult(BaseModel):
     claims: list[Claim] = []
     skipped: list[SkippedSegment] = []
     llm_calls: int = 0
+    llm_errors: int = 0
 
 
 # --- websocket protocol ---------------------------------------------------

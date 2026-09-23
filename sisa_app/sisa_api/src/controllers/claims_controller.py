@@ -20,7 +20,8 @@ def gemini_factory() -> LLMClient:
         api_key=settings.gemini_api_key,
         model=settings.gemini_model,
         timeout_seconds=settings.gemini_timeout_seconds,
-        thinking_budget=settings.gemini_thinking_budget,
+        thinking_level=settings.gemini_thinking_level,
+        retry_attempts=settings.gemini_retry_attempts,
     )
 
 

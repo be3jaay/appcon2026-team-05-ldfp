@@ -32,12 +32,11 @@ class Settings:
 
     # Claim detection (Gemini).
     gemini_api_key: str | None = os.environ.get("GEMINI_API_KEY") or None
-    gemini_model: str = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+    gemini_model: str = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
     gemini_timeout_seconds: float = float(os.environ.get("GEMINI_TIMEOUT_SECONDS", "30"))
-    # 0 turns thinking off on 2.5 Flash for low latency; unset leaves the model default.
-    gemini_thinking_budget: int | None = (
-        int(os.environ["GEMINI_THINKING_BUDGET"]) if os.environ.get("GEMINI_THINKING_BUDGET") else 0
-    )
+    # minimal | low | medium | high. Lower = faster; empty string = model default.
+    gemini_thinking_level: str | None = os.environ.get("GEMINI_THINKING_LEVEL", "low") or None
+    gemini_retry_attempts: int = int(os.environ.get("GEMINI_RETRY_ATTEMPTS", "3"))
     claims_batch_max_segments: int = int(os.environ.get("CLAIMS_BATCH_MAX_SEGMENTS", "3"))
     claims_batch_max_wait_s: float = float(os.environ.get("CLAIMS_BATCH_MAX_WAIT_S", "15"))
     claims_context_segments: int = int(os.environ.get("CLAIMS_CONTEXT_SEGMENTS", "2"))
