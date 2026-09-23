@@ -21,14 +21,15 @@ pnpm typecheck
 
 ## Claim detection (`sisa_api/src/services/claims/`)
 
-Browser Soniox hook → finished segment → `WS /api/v1/claims/ws` → `ClaimDetector`: `prefilter` (no LLM) → `SegmentBatcher` (flush on speaker change / 3 segments / 15 s timer / stop) → `ClaimClassifier` (ONE Gemini call per batch, previous 2 lines sent as CONTEXT only). Mic and video share this path. See `sisa_api/README.md` for the protocol, config and known gaps.
+Browser Soniox hook → finished segment → `WS /api/v1/claims/ws` → `ClaimDetector`: `prefilter` (no LLM) → `SegmentBatcher` (flush on speaker change / 3 segments / 15 s timer / stop) → worker (shared `RateLimiter` at `GEMINI_RPM`, merges queued batches, retries 429/503) → `ClaimClassifier` (ONE Gemini call, previous 2 lines sent as CONTEXT only, returns a verbatim `quote` per claim). The frontend highlights quotes via `sisa_fe/components/claims/claim-text.tsx`. Mic and video share this path. See `sisa_api/README.md` for the protocol, config and known gaps.
 
 Rules to keep:
-- Never one LLM call per segment. Tests count calls on a fake client.
+- Never one LLM call per segment or per speaker turn. Tests count calls on a fake client.
+- Don't add SDK-level retries: they burn shared quota. Retries go through the detector and limiter.
 - `SYSTEM_PROMPT` stays a constant, identical on every call (prompt caching), and has nothing specific to one video, speaker or politician.
 - The LLM client is injected (`LLMClient` protocol). Tests use fakes from `tests/conftest.py` and never hit the network.
 - Prefilter: when unsure, keep. Word lists go in `WORD_LISTS` only.
-- Scope: detection only. Verification, persistence and UI for claims are separate work.
+- Scope: detection and in-transcript highlighting only. Verification and persistence are separate work.
 
 ## Security
 
