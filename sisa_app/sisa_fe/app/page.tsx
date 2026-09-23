@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils"
 import { TranscribeCard } from "@/components/transcribe/transcribe-card"
 import { VideoTranscribe } from "@/components/video/video-transcribe"
 
-type Mode = "video" | "mic"
+type Mode = "video" | "mic" | "test"
 
 const MODES: { mode: Mode; label: string }[] = [
   { mode: "video", label: "Video" },
