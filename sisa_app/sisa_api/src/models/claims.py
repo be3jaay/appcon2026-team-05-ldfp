@@ -25,6 +25,7 @@ class Claim(BaseModel):
     timestamp: int | None = Field(None, description="Segment start in ms from stream start.")
     speaker: str
     text: str
+    quote: str | None = Field(None, description="Verbatim words in the segment; None if not found.")
     type: ClaimType
     checkworthiness: float = Field(ge=0, le=1)
     reason: str

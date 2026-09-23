@@ -79,3 +79,30 @@ def test_tagalog_affixes_match_prefix_entries():
 def test_word_lists_are_one_editable_structure():
     for name in ("greetings", "procedural", "number_words", "legal", "institutions", "absolutes", "assertion_verbs"):
         assert WORD_LISTS[name], name
+
+
+# Real hearing transcript: read-aloud pointers are procedure, testimony is kept.
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Paragraph 4, Your Honor, please. Uh, witness.",
+        "Uh, can you continue with paragraph 5, Celine? Silene?",
+        "Page 12, please.",
+    ],
+)
+def test_document_pointers_are_procedure(text):
+    keep, reason = prefilter(text)
+    assert not keep and reason
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Under Article XI, Section 3, the Senate has the sole power to try impeachment cases.",
+        "Nasa page 12 ng COA report ang ₱73 milyon na disallowance.",
+        "Para 2 taon na walang liquidation report ang opisina.",
+        "In many instances it is impractical and sometimes impossible to obtain such receipts.",
+    ],
+)
+def test_pointers_do_not_hide_real_claims(text):
+    assert prefilter(text)[0]

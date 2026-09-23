@@ -204,3 +204,26 @@ def test_system_prompt_is_generic():
 async def test_llm_error_raises_classifier_error():
     with pytest.raises(ClassifierError):
         await ClaimClassifier(FakeLLM(TimeoutError("slow"))).classify(BATCH)
+
+
+def test_quote_kept_only_when_verbatim_in_segment():
+    raw = json.dumps(
+        {
+            "claims": [
+                item(1, "a", quote="₱125 milyon ay naubos"),  # verbatim
+                item(1, "b", quote="  ANG ₱125   MILYON  "),  # case/space differences are fine
+                item(1, "c", quote="₱125 million was spent"),  # paraphrase -> dropped
+                item(1, "d"),  # no quote
+            ]
+        }
+    )
+    claims = parse_claims(raw, BATCH)
+    assert [c.quote for c in claims] == ["₱125 milyon ay naubos", "ANG ₱125   MILYON", None, None]
+    assert len(claims) == 4  # a bad quote never drops the claim itself
+
+
+def test_schema_and_prompt_ask_for_quote():
+    from src.services.claims.classifier import RESPONSE_SCHEMA
+
+    assert "quote" in RESPONSE_SCHEMA["properties"]["claims"]["items"]["required"]
+    assert '"quote"' in SYSTEM_PROMPT

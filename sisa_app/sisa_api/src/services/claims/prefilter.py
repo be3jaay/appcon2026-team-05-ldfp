@@ -28,6 +28,14 @@ WORD_LISTS: dict[str, list[str]] = {
         "let the record show", "for the record", "order in the court", "recess",
         "the floor is yours", "mister chair", "madam chair", "mr. chair", "madam chairperson",
         "point of order", "point of information", "go ahead", "sige po", "opo", "okay po",
+        "please continue", "you may continue", "continue reading", "please read",
+        "basahin mo", "basahin ninyo", "ituloy mo", "ituloy ninyo", "next question",
+    ],
+    # document pointers read aloud ("paragraph 4", "page 12"): procedure, not a claim.
+    # Each is followed by a number or roman numeral; Article/Section are NOT here (legal).
+    "document_refs": [
+        "paragraph", "page", "pahina", "talata", "line", "linya",
+        "exhibit", "annex", "item", "footnote", "slide", "tab",
     ],
     # words that carry no content on their own once greetings/procedure are removed
     "filler": [
@@ -36,6 +44,7 @@ WORD_LISTS: dict[str, list[str]] = {
         "eh", "so", "well", "lahat", "everyone", "everybody", "sa inyong", "inyong", "sa inyo",
         "ninyo", "kayo", "you", "all", "ladies", "gentlemen", "and gentlemen", "honor",
         "chair", "chairman", "madam", "mister", "senator", "congressman", "secretary",
+        "please", "witness", "the witness", "counsel", "sorry", "no", "ha", "diba",
     ],
     "question_starts": [
         "ano", "anong", "bakit", "paano", "sino", "sinong", "saan", "kailan", "ilan",
@@ -121,7 +130,14 @@ def _compile(entries: list[str]) -> re.Pattern[str]:
     return re.compile("|".join(_entry_pattern(e) for e in ordered), re.IGNORECASE)
 
 
-_PATTERNS: dict[str, re.Pattern[str]] = {name: _compile(entries) for name, entries in WORD_LISTS.items()}
+_PATTERNS: dict[str, re.Pattern[str]] = {
+    name: _compile(entries) for name, entries in WORD_LISTS.items() if name != "document_refs"
+}
+_DOC_REF_RE = re.compile(
+    r"(?<!\w)(?:" + "|".join(re.escape(e) for e in WORD_LISTS["document_refs"]) + r")\.?\s*(?:no\.?\s*)?"
+    r"(?:\d+[a-z]?|[ivxlc]+)(?!\w)",
+    re.IGNORECASE,
+)
 _QUESTION_START_RE = re.compile(
     r"^\s*(?:" + "|".join(re.escape(e.strip()) for e in WORD_LISTS["question_starts"]) + r")\b",
     re.IGNORECASE,
@@ -149,11 +165,12 @@ def _only_greeting_or_procedure(text: str) -> str | None:
     """Return 'greeting'/'procedural' if nothing is left after removing those
     phrases and filler words, else None."""
     greeting = bool(_PATTERNS["greetings"].search(text))
-    procedural = bool(_PATTERNS["procedural"].search(text))
+    procedural = bool(_PATTERNS["procedural"].search(text) or _DOC_REF_RE.search(text))
     if not (greeting or procedural):
         return None
     rest = _PATTERNS["greetings"].sub(" ", text)
     rest = _PATTERNS["procedural"].sub(" ", rest)
+    rest = _DOC_REF_RE.sub(" ", rest)
     rest = _PATTERNS["filler"].sub(" ", rest)
     if _words(rest):
         return None
@@ -178,7 +195,8 @@ def prefilter(text: str) -> tuple[bool, str]:
     if not text:
         return False, "empty segment"
 
-    signals = claim_signals(text)
+    # A read-aloud pointer ("paragraph 5") is not a claim signal, so judge the rest.
+    signals = claim_signals(_DOC_REF_RE.sub(" ", text))
     words = _words(text)
 
     kind = _only_greeting_or_procedure(text)

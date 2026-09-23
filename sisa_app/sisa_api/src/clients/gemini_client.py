@@ -1,17 +1,42 @@
 import logging
+import re
+from typing import Any
 
 from google import genai
-from google.genai import types
+from google.genai import errors, types
+
+from ..services.claims.classifier import RetryableLLMError
 
 logger = logging.getLogger(__name__)
+
+_RETRYABLE_CODES = {429, 500, 502, 503, 504}
+_DEFAULT_BACKOFF_S = {429: 30.0}  # used when the response carries no retryDelay
+_OVERLOAD_BACKOFF_S = 5.0
 
 
 class GeminiConfigError(RuntimeError):
     pass
 
 
+def retry_after_seconds(exc: errors.APIError) -> float | None:
+    """Gemini puts the wait in error.details[RetryInfo].retryDelay ("38s") and in the message.
+    None when the response gives no delay."""
+    details: Any = exc.details
+    if isinstance(details, dict):
+        for item in (details.get("error") or {}).get("details") or []:
+            delay = isinstance(item, dict) and item.get("retryDelay")
+            if isinstance(delay, str) and (m := re.fullmatch(r"([\d.]+)s", delay)):
+                return float(m.group(1))
+    if m := re.search(r"retry in ([\d.]+)s", str(exc)):
+        return float(m.group(1))
+    return None
+
+
 class GeminiClient:
-    """Implements the claims `LLMClient` protocol on Google Gemini."""
+    """Implements the claims `LLMClient` protocol on Google Gemini.
+
+    SDK-level retries are off: retries are paced by the detector through the
+    shared rate limiter, so a retry never burns quota another session needs."""
 
     def __init__(
         self,
@@ -19,7 +44,6 @@ class GeminiClient:
         model: str,
         timeout_seconds: float = 30.0,
         thinking_level: str | None = "low",
-        retry_attempts: int = 3,
     ):
         if not api_key:
             raise GeminiConfigError(
@@ -31,13 +55,7 @@ class GeminiClient:
             api_key=api_key,
             http_options=types.HttpOptions(
                 timeout=int(timeout_seconds * 1000),
-                # Gemini returns 503 under load and 429 past the per-minute quota.
-                retry_options=types.HttpRetryOptions(
-                    attempts=retry_attempts,
-                    initial_delay=2.0,
-                    max_delay=30.0,
-                    http_status_codes=[429, 500, 503, 504],
-                ),
+                retry_options=types.HttpRetryOptions(attempts=1),
             ),
         )
 
@@ -51,12 +69,21 @@ class GeminiClient:
         )
         if self.thinking_level:
             config.thinking_config = types.ThinkingConfig(thinking_level=self.thinking_level)
-        response = await self._client.aio.models.generate_content(
-            model=self.model, contents=user, config=config
-        )
+        try:
+            response = await self._client.aio.models.generate_content(
+                model=self.model, contents=user, config=config
+            )
+        except errors.APIError as exc:
+            if exc.code in _RETRYABLE_CODES:
+                delay = retry_after_seconds(exc)
+                if delay is not None:
+                    raise RetryableLLMError(f"{exc.code} {exc.status}", delay) from exc
+                fallback = _DEFAULT_BACKOFF_S.get(exc.code, _OVERLOAD_BACKOFF_S)
+                raise RetryableLLMError(f"{exc.code} {exc.status}", fallback, exponential=True) from exc
+            raise
         usage = response.usage_metadata
         if usage is not None:
-            logger.debug(
+            logger.info(
                 "gemini tokens: prompt=%s cached=%s output=%s",
                 usage.prompt_token_count,
                 usage.cached_content_token_count,

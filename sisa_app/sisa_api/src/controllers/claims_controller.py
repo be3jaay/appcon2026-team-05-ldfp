@@ -9,6 +9,7 @@ from ..config import is_origin_allowed, settings
 from ..models.claims import SegmentMessage
 from ..services.claims.classifier import ClaimClassifier, LLMClient
 from ..services.claims.detector import ClaimDetector
+from ..services.claims.rate_limiter import RateLimiter
 
 logger = logging.getLogger(__name__)
 
@@ -21,8 +22,18 @@ def gemini_factory() -> LLMClient:
         model=settings.gemini_model,
         timeout_seconds=settings.gemini_timeout_seconds,
         thinking_level=settings.gemini_thinking_level,
-        retry_attempts=settings.gemini_retry_attempts,
     )
+
+
+_rate_limiter: RateLimiter | None = None
+
+
+def shared_rate_limiter() -> RateLimiter:
+    """One limiter for the whole process: every session shares the same API quota."""
+    global _rate_limiter
+    if _rate_limiter is None:
+        _rate_limiter = RateLimiter(settings.gemini_rpm)
+    return _rate_limiter
 
 
 def get_llm_factory() -> LLMFactory:
@@ -50,7 +61,11 @@ async def run_session(websocket: WebSocket, llm_factory: LLMFactory) -> None:
         max_segments=settings.claims_batch_max_segments,
         max_wait_s=settings.claims_batch_max_wait_s,
         context_size=settings.claims_context_segments,
+        max_call_segments=settings.claims_max_segments_per_call,
+        max_attempts=settings.claims_llm_max_attempts,
+        rate_limiter=shared_rate_limiter(),
     )
+    logger.info("[claims %s] session opened", detector.session)
 
     try:
         while True:
@@ -80,7 +95,7 @@ async def run_session(websocket: WebSocket, llm_factory: LLMFactory) -> None:
                 continue
             await websocket.send_json({"type": "error", "message": f"Unknown message type: {kind!r}"})
     except WebSocketDisconnect:
-        logger.info("claims websocket closed by client")
+        logger.info("[claims %s] websocket closed by client", detector.session)
         detector.abort()
     except ValueError:  # non-JSON frame
         await websocket.send_json({"type": "error", "message": "Messages must be JSON.", "fatal": True})

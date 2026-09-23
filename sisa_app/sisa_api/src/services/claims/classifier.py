@@ -21,8 +21,21 @@ class LLMClient(Protocol):
     async def generate(self, system: str, user: str, response_schema: dict | None = None) -> str: ...
 
 
+class RetryableLLMError(RuntimeError):
+    """Raised by an LLMClient for transient failures (rate limit, overload)."""
+
+    def __init__(self, message: str, retry_after: float, exponential: bool = False):
+        super().__init__(message)
+        self.retry_after = retry_after
+        # True when the provider gave no delay: back off 1x, 2x, 4x... per attempt.
+        self.exponential = exponential
+
+
 class ClassifierError(RuntimeError):
-    pass
+    def __init__(self, message: str, retry_after: float | None = None, exponential: bool = False):
+        super().__init__(message)
+        self.retry_after = retry_after  # None = not worth retrying
+        self.exponential = exponential
 
 
 SYSTEM_PROMPT = """\
@@ -68,6 +81,8 @@ what that source said; keep the source in the text.
 - Rhetorical questions that clearly assert something ("Hindi ba't kayo ang pumirma noong 2022?") \
 may be labelled; genuine questions are not claims.
 - Greetings, thanks, procedure and filler produce no items.
+- "quote": the exact words from the segment that carry this claim, copied verbatim (same \
+spelling, no paraphrase), as short as possible while still containing the claim.
 - "text": the claim restated as one short, self-contained sentence in the speaker's language, \
 resolving pronouns from context where obvious. Do not add facts that were not said.
 - "checkworthiness": 0 to 1, how worth fact-checking it is: high (0.7–1) for specific, \
@@ -79,7 +94,7 @@ none; for other types, "".
 - Do not judge whether a claim is true. Only detect and label.
 
 Return ONLY JSON of this shape:
-{"claims": [{"segment": <number of the segment>, "text": "...", "type": "fact|legal|opinion|\
+{"claims": [{"segment": <number of the segment>, "quote": "...", "text": "...", "type": "fact|legal|opinion|\
 promise|sarcasm|figurative|vague", "checkworthiness": 0.0, "reason": "...", "literal_claim": ""}]}
 If there are no claims, return {"claims": []}.
 """
@@ -93,13 +108,14 @@ RESPONSE_SCHEMA: dict[str, Any] = {
                 "type": "object",
                 "properties": {
                     "segment": {"type": "integer"},
+                    "quote": {"type": "string"},
                     "text": {"type": "string"},
                     "type": {"type": "string", "enum": list(CLAIM_TYPES)},
                     "checkworthiness": {"type": "number"},
                     "reason": {"type": "string"},
                     "literal_claim": {"type": "string"},
                 },
-                "required": ["segment", "text", "type", "checkworthiness", "reason"],
+                "required": ["segment", "quote", "text", "type", "checkworthiness", "reason"],
             },
         }
     },
@@ -116,6 +132,7 @@ class _RawClaim(BaseModel):
 
     segment: int
     text: str
+    quote: str | None = None
     type: str = "vague"
     checkworthiness: float = 0.5
     reason: str = ""
@@ -162,13 +179,25 @@ class _RawClaim(BaseModel):
     def _reason_str(cls, v: Any) -> str:
         return "" if v is None else str(v).strip()
 
-    @field_validator("literal_claim", mode="before")
+    @field_validator("quote", "literal_claim", mode="before")
     @classmethod
     def _literal_str(cls, v: Any) -> str | None:
         if v is None:
             return None
         v = str(v).strip()
         return v or None
+
+
+def _norm(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip().casefold()
+
+
+def verbatim_quote(quote: str | None, segment_text: str) -> str | None:
+    """Keep the quote only if it really occurs in the segment (so the UI can highlight it)."""
+    if not quote:
+        return None
+    q = quote.strip(" \"'“”‘’.,")
+    return q if q and _norm(q) in _norm(segment_text) else None
 
 
 def build_user_prompt(batch: list[TranscriptSegment], context: list[TranscriptSegment]) -> str:
@@ -236,6 +265,7 @@ def parse_claims(raw: str, batch: list[TranscriptSegment]) -> list[Claim]:
                 timestamp=seg.start_ms,
                 speaker=seg.speaker,
                 text=parsed.text,
+                quote=verbatim_quote(parsed.quote, seg.text),
                 type=parsed.type,
                 checkworthiness=parsed.checkworthiness,
                 reason=parsed.reason or _DEFAULT_REASONS.get(parsed.type, f"Labelled as {parsed.type}."),
@@ -259,6 +289,10 @@ class ClaimClassifier:
         self.calls += 1
         try:
             raw = await self.llm.generate(SYSTEM_PROMPT, build_user_prompt(batch, context or []), RESPONSE_SCHEMA)
+        except RetryableLLMError as exc:
+            raise ClassifierError(
+                f"LLM call failed: {exc}", retry_after=exc.retry_after, exponential=exc.exponential
+            ) from exc
         except Exception as exc:
             raise ClassifierError(f"LLM call failed: {exc}") from exc
         return parse_claims(raw, batch)

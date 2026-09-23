@@ -36,10 +36,16 @@ class Settings:
     gemini_timeout_seconds: float = float(os.environ.get("GEMINI_TIMEOUT_SECONDS", "30"))
     # minimal | low | medium | high. Lower = faster; empty string = model default.
     gemini_thinking_level: str | None = os.environ.get("GEMINI_THINKING_LEVEL", "low") or None
-    gemini_retry_attempts: int = int(os.environ.get("GEMINI_RETRY_ATTEMPTS", "3"))
+    # Pace all claim LLM calls (every session) to this many per minute. Free tier: 5. 0 = no limit.
+    gemini_rpm: float = float(os.environ.get("GEMINI_RPM", "5"))
+    claims_llm_max_attempts: int = int(os.environ.get("CLAIMS_LLM_MAX_ATTEMPTS", "4"))
+    # Batches that queue up while waiting for a call slot are merged, up to this many segments.
+    claims_max_segments_per_call: int = int(os.environ.get("CLAIMS_MAX_SEGMENTS_PER_CALL", "8"))
     claims_batch_max_segments: int = int(os.environ.get("CLAIMS_BATCH_MAX_SEGMENTS", "3"))
     claims_batch_max_wait_s: float = float(os.environ.get("CLAIMS_BATCH_MAX_WAIT_S", "15"))
     claims_context_segments: int = int(os.environ.get("CLAIMS_CONTEXT_SEGMENTS", "2"))
+
+    log_level: str = os.environ.get("LOG_LEVEL", "INFO").upper()
 
 
 settings = Settings()

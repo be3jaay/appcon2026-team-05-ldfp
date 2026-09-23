@@ -11,6 +11,7 @@ case's own line are scored; claims on its context lines are ignored.
 """
 
 import argparse
+import logging
 import asyncio
 import json
 import sys
@@ -24,6 +25,7 @@ from src.config import settings  # noqa: E402
 from src.models.claims import CLAIM_TYPES, Claim, TranscriptSegment  # noqa: E402
 from src.services.claims.classifier import ClaimClassifier, LLMClient  # noqa: E402
 from src.services.claims.detector import ClaimDetector  # noqa: E402
+from src.services.claims.rate_limiter import RateLimiter  # noqa: E402
 
 DEFAULT_FILE = ROOT / "data" / "eval" / "claim_detection.json"
 NONE = "none"
@@ -52,35 +54,21 @@ def _segment(segment_id: str, text: str, speaker: str, clock: list[int]) -> Tran
     return TranscriptSegment(segment_id=segment_id, text=text, speaker=speaker, start_ms=clock[0], end_ms=clock[0] + 3500)
 
 
-class Paced:
-    """Spaces LLM calls to stay under a requests-per-minute quota."""
-
-    def __init__(self, inner: LLMClient, rpm: float):
-        self.inner = inner
-        self.interval = 60.0 / rpm if rpm > 0 else 0.0
-        self._next = 0.0
-
-    async def generate(self, system: str, user: str, response_schema: dict | None = None) -> str:
-        loop = asyncio.get_running_loop()
-        wait = self._next - loop.time()
-        if wait > 0:
-            await asyncio.sleep(wait)
-        self._next = loop.time() + self.interval
-        return await self.inner.generate(system, user, response_schema)
-
-
 def make_llm() -> LLMClient:
     from src.controllers.claims_controller import gemini_factory
 
     return gemini_factory()
 
 
-def make_detector(llm: LLMClient) -> ClaimDetector:
+def make_detector(llm: LLMClient, limiter: RateLimiter) -> ClaimDetector:
     return ClaimDetector(
         ClaimClassifier(llm),
         max_segments=settings.claims_batch_max_segments,
         max_wait_s=3600,  # offline: batches close on size/speaker/stop, not wall time
         context_size=settings.claims_context_segments,
+        max_call_segments=settings.claims_batch_max_segments,  # score batches as configured
+        max_attempts=settings.claims_llm_max_attempts,
+        rate_limiter=limiter,
     )
 
 
@@ -90,9 +78,9 @@ async def run(cases: list[dict], mode: str, rpm: float) -> tuple[list[Claim], se
     skipped: set[str] = set()
     calls = segments = errors = 0
     groups = [cases] if mode == "stream" else [[c] for c in cases]
-    llm = Paced(make_llm(), rpm)
+    llm, limiter = make_llm(), RateLimiter(rpm)
     for group in groups:
-        detector = make_detector(llm)
+        detector = make_detector(llm, limiter)
         segs = [s for case in group for s in case_segments(case, clock)]
         result = await detector.process(segs)
         claims += result.claims
@@ -197,6 +185,7 @@ def print_report(cases, claims, skipped, calls, segments, errors, mode):
 
 def main() -> int:
     sys.stdout.reconfigure(encoding="utf-8")  # ₱ and Tagalog text on Windows consoles
+    logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(message)s")
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--file", type=Path, default=DEFAULT_FILE)
     parser.add_argument("--mode", choices=["stream", "isolated"], default="stream")
