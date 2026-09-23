@@ -74,7 +74,9 @@ export function TranscribeCard() {
               <span
                 key={i}
                 className="w-[2px] rounded-[1px] bg-[#A1A1A8] transition-[height] duration-100"
-                style={{ height: `${waveBarHeight(i, tick * WAVE_TICK_MS, live)}px` }}
+                style={{
+                  height: `${waveBarHeight(i, tick * WAVE_TICK_MS, live)}px`,
+                }}
               />
             ))}
           </div>
@@ -91,7 +93,7 @@ export function TranscribeCard() {
           </span>
           <button
             type="button"
-            onClick={live ? stop : start}
+            onClick={live ? stop : () => void start()}
             disabled={busy}
             className="rounded-[5px] border border-white/[0.14] bg-transparent px-2.5 py-1 text-xs text-[#ECECEE] transition-colors hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-50"
           >
@@ -125,7 +127,10 @@ export function TranscribeCard() {
           </p>
         ) : (
           segments.map((seg) => (
-            <div key={seg.id} className="grid grid-cols-[104px_minmax(0,1fr)] gap-4">
+            <div
+              key={seg.id}
+              className="grid grid-cols-[104px_minmax(0,1fr)] gap-4"
+            >
               <span
                 className={cn(
                   mono.className,

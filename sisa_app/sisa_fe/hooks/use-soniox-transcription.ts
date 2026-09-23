@@ -1,6 +1,12 @@
 "use client"
 
-import { useCallback, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
+
+import {
+  micInput,
+  type AudioInput,
+  type AudioInputFactory,
+} from "@/lib/audio-inputs"
 
 const SONIOX_WS_URL = "wss://stt-rt.soniox.com/transcribe-websocket"
 const END_TOKEN = "<end>"
@@ -9,16 +15,13 @@ const apiBaseUrl =
   process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ?? "http://localhost:8000"
 
 export type TranscriptStatus =
-  | "idle"
-  | "connecting"
-  | "live"
-  | "stopping"
-  | "error"
+  "idle" | "connecting" | "live" | "stopping" | "error"
 
 export interface TranscriptSegment {
   id: number
   speaker: string
   text: string
+  startTime?: number
 }
 
 interface SonioxToken {
@@ -50,13 +53,13 @@ export function useSonioxTranscription(languageHint = "en") {
   const [error, setError] = useState<string | null>(null)
 
   const wsRef = useRef<WebSocket | null>(null)
-  const audioCtxRef = useRef<AudioContext | null>(null)
-  const mediaStreamRef = useRef<MediaStream | null>(null)
+  const inputRef = useRef<AudioInput | null>(null)
   const processorRef = useRef<ScriptProcessorNode | null>(null)
   const segmentsRef = useRef<TranscriptSegment[]>([])
   const currentSpeakerRef = useRef<string | null>(null)
   const forceNewSegmentRef = useRef(true)
   const nextIdRef = useRef(0)
+  const stopRef = useRef<() => void>(() => {})
 
   const cleanupMedia = useCallback(async () => {
     if (processorRef.current) {
@@ -65,17 +68,9 @@ export function useSonioxTranscription(languageHint = "en") {
       processorRef.current = null
     }
 
-    mediaStreamRef.current?.getTracks().forEach((track) => track.stop())
-    mediaStreamRef.current = null
-
-    if (audioCtxRef.current) {
-      try {
-        await audioCtxRef.current.close()
-      } catch {
-        // already closed
-      }
-      audioCtxRef.current = null
-    }
+    const input = inputRef.current
+    inputRef.current = null
+    await input?.release()
   }, [])
 
   const commitFinalToken = useCallback(
@@ -89,7 +84,12 @@ export function useSonioxTranscription(languageHint = "en") {
       ) {
         segmentsRef.current = [
           ...list,
-          { id: nextIdRef.current++, speaker: speakerKey, text: "" },
+          {
+            id: nextIdRef.current++,
+            speaker: speakerKey,
+            text: "",
+            startTime: inputRef.current?.now?.(),
+          },
         ]
         currentSpeakerRef.current = speakerKey
         forceNewSegmentRef.current = false
@@ -130,26 +130,23 @@ export function useSonioxTranscription(languageHint = "en") {
     [commitFinalToken]
   )
 
-  const startCapture = useCallback(
-    (ws: WebSocket, audioCtx: AudioContext, stream: MediaStream) => {
-      const source = audioCtx.createMediaStreamSource(stream)
-      const processor = audioCtx.createScriptProcessor(4096, 1, 1)
-      const silentGain = audioCtx.createGain()
-      silentGain.gain.value = 0
+  const startCapture = useCallback((ws: WebSocket, input: AudioInput) => {
+    const { context: audioCtx, node: source } = input
+    const processor = audioCtx.createScriptProcessor(4096, 1, 1)
+    const silentGain = audioCtx.createGain()
+    silentGain.gain.value = 0
 
-      processor.onaudioprocess = (event) => {
-        if (ws.readyState !== WebSocket.OPEN) return
-        const input = event.inputBuffer.getChannelData(0)
-        ws.send(floatTo16BitPCM(input).buffer as ArrayBuffer)
-      }
+    processor.onaudioprocess = (event) => {
+      if (ws.readyState !== WebSocket.OPEN) return
+      const input = event.inputBuffer.getChannelData(0)
+      ws.send(floatTo16BitPCM(input).buffer as ArrayBuffer)
+    }
 
-      source.connect(processor)
-      processor.connect(silentGain)
-      silentGain.connect(audioCtx.destination)
-      processorRef.current = processor
-    },
-    []
-  )
+    source.connect(processor)
+    processor.connect(silentGain)
+    silentGain.connect(audioCtx.destination)
+    processorRef.current = processor
+  }, [])
 
   const reset = useCallback(() => {
     segmentsRef.current = []
@@ -161,73 +158,70 @@ export function useSonioxTranscription(languageHint = "en") {
     setError(null)
   }, [])
 
-  const start = useCallback(async () => {
-    reset()
-    setStatus("connecting")
+  const start = useCallback(
+    async (inputFactory: AudioInputFactory = micInput) => {
+      reset()
+      setStatus("connecting")
 
-    try {
-      const mediaStream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-      })
-      mediaStreamRef.current = mediaStream
+      try {
+        const input = await inputFactory()
+        inputRef.current = input
+        const audioCtx = input.context
 
-      const AudioContextCtor =
-        window.AudioContext ||
-        (window as unknown as { webkitAudioContext: typeof AudioContext })
-          .webkitAudioContext
-      const audioCtx = new AudioContextCtor()
-      audioCtxRef.current = audioCtx
+        const res = await fetch(`${apiBaseUrl}/api/soniox/temporary-key`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ expires_in_seconds: 60 }),
+        })
+        const body = await res.json()
+        if (!res.ok) {
+          throw new Error(body.detail ?? "Failed to get a temporary key.")
+        }
 
-      const res = await fetch(`${apiBaseUrl}/api/soniox/temporary-key`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ expires_in_seconds: 60 }),
-      })
-      const body = await res.json()
-      if (!res.ok) {
-        throw new Error(body.detail ?? "Failed to get a temporary key.")
-      }
+        const ws = new WebSocket(SONIOX_WS_URL)
+        ws.binaryType = "arraybuffer"
+        wsRef.current = ws
 
-      const ws = new WebSocket(SONIOX_WS_URL)
-      ws.binaryType = "arraybuffer"
-      wsRef.current = ws
+        ws.onopen = () => {
+          ws.send(
+            JSON.stringify({
+              api_key: body.api_key,
+              model: "stt-rt-v5",
+              audio_format: "pcm_s16le",
+              sample_rate: audioCtx.sampleRate,
+              num_channels: 1,
+              language_hints: [languageHint || "en"],
+              enable_endpoint_detection: true,
+              enable_speaker_diarization: true,
+            })
+          )
+          startCapture(ws, input)
+          input.onEnded?.(() => stopRef.current())
+          setStatus("live")
+        }
 
-      ws.onopen = () => {
-        ws.send(
-          JSON.stringify({
-            api_key: body.api_key,
-            model: "stt-rt-v5",
-            audio_format: "pcm_s16le",
-            sample_rate: audioCtx.sampleRate,
-            num_channels: 1,
-            language_hints: [languageHint || "en"],
-            enable_endpoint_detection: true,
-            enable_speaker_diarization: true,
-          })
-        )
-        startCapture(ws, audioCtx, mediaStream)
-        setStatus("live")
-      }
+        ws.onmessage = (event) => {
+          handleMessage(JSON.parse(event.data))
+        }
 
-      ws.onmessage = (event) => {
-        handleMessage(JSON.parse(event.data))
-      }
+        ws.onerror = () => {
+          setError("WebSocket connection error.")
+          setStatus("error")
+        }
 
-      ws.onerror = () => {
-        setError("WebSocket connection error.")
+        ws.onclose = () => {
+          if (wsRef.current === ws) wsRef.current = null
+          void cleanupMedia()
+          setStatus((s) => (s === "error" ? s : "idle"))
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err))
         setStatus("error")
+        await cleanupMedia()
       }
-
-      ws.onclose = () => {
-        void cleanupMedia()
-        setStatus((s) => (s === "error" ? s : "idle"))
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-      setStatus("error")
-      await cleanupMedia()
-    }
-  }, [cleanupMedia, handleMessage, languageHint, reset, startCapture])
+    },
+    [cleanupMedia, handleMessage, languageHint, reset, startCapture]
+  )
 
   const stop = useCallback(() => {
     setStatus("stopping")
@@ -240,6 +234,18 @@ export function useSonioxTranscription(languageHint = "en") {
       void cleanupMedia().then(() => setStatus("idle"))
     }
   }, [cleanupMedia])
+
+  useEffect(() => {
+    stopRef.current = stop
+  }, [stop])
+
+  useEffect(
+    () => () => {
+      wsRef.current?.close()
+      void cleanupMedia()
+    },
+    [cleanupMedia]
+  )
 
   return { status, segments, interimText, error, start, stop }
 }
