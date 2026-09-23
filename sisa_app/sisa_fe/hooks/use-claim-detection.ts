@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import { apiWsBaseUrl } from "@/lib/api"
 
@@ -15,6 +15,7 @@ export interface Claim {
   timestamp: number | null
   speaker: string
   text: string
+  quote: string | null
   type: ClaimType
   checkworthiness: number
   reason: string
@@ -34,11 +35,33 @@ export interface FinalSegment {
   end_ms?: number
 }
 
+/** queued: sent, waiting for a batch/rate-limit slot · checking: LLM call in flight */
+export type SegmentClaimStatus =
+  "queued" | "checking" | "done" | "skipped" | "error"
+
 type ServerMessage =
   | ({ type: "skipped" } & SkippedSegment)
+  | { type: "checking"; segment_ids: string[] }
   | { type: "claims"; segment_ids: string[]; claims: Claim[] }
-  | { type: "error"; message: string; fatal?: boolean }
+  | { type: "error"; message: string; fatal?: boolean; segment_ids?: string[] }
   | { type: "done"; claims: number; skipped: number; llm_calls: number }
+
+const PENDING: SegmentClaimStatus[] = ["queued", "checking"]
+
+function withStatus(
+  prev: Record<string, SegmentClaimStatus>,
+  ids: string[],
+  status: SegmentClaimStatus
+) {
+  const next = { ...prev }
+  for (const id of ids) next[id] = status
+  return next
+}
+
+function failPending(prev: Record<string, SegmentClaimStatus>) {
+  const pending = Object.keys(prev).filter((id) => PENDING.includes(prev[id]))
+  return pending.length ? withStatus(prev, pending, "error") : prev
+}
 
 /**
  * Streams finished transcript segments to the backend claim detector over a
@@ -48,6 +71,9 @@ type ServerMessage =
 export function useClaimDetection() {
   const [claims, setClaims] = useState<Claim[]>([])
   const [skipped, setSkipped] = useState<SkippedSegment[]>([])
+  const [statusById, setStatusById] = useState<
+    Record<string, SegmentClaimStatus>
+  >({})
   const [error, setError] = useState<string | null>(null)
 
   const wsRef = useRef<WebSocket | null>(null)
@@ -59,6 +85,8 @@ export function useClaimDetection() {
     if (ws?.readyState === WebSocket.OPEN) ws.send(data)
     else if (ws?.readyState === WebSocket.CONNECTING)
       pendingRef.current.push(data)
+    else return false
+    return true
   }, [])
 
   const connect = useCallback(() => {
@@ -66,6 +94,7 @@ export function useClaimDetection() {
     pendingRef.current = []
     setClaims([])
     setSkipped([])
+    setStatusById({})
     setError(null)
 
     const ws = new WebSocket(CLAIMS_WS_URL)
@@ -78,13 +107,25 @@ export function useClaimDetection() {
 
     ws.onmessage = (event) => {
       const message = JSON.parse(event.data) as ServerMessage
-      if (message.type === "claims") {
+      if (message.type === "checking") {
+        setStatusById((prev) =>
+          withStatus(prev, message.segment_ids, "checking")
+        )
+      } else if (message.type === "claims") {
         setClaims((prev) => [...prev, ...message.claims])
+        setStatusById((prev) => withStatus(prev, message.segment_ids, "done"))
       } else if (message.type === "skipped") {
         const { segment_id, reason } = message
         setSkipped((prev) => [...prev, { segment_id, reason }])
+        setStatusById((prev) => withStatus(prev, [segment_id], "skipped"))
       } else if (message.type === "error") {
         setError(message.message)
+        if (message.segment_ids) {
+          const ids = message.segment_ids
+          setStatusById((prev) => withStatus(prev, ids, "error"))
+        } else if (message.fatal) {
+          setStatusById(failPending)
+        }
       }
     }
 
@@ -92,21 +133,44 @@ export function useClaimDetection() {
 
     ws.onclose = () => {
       if (wsRef.current === ws) wsRef.current = null
+      // Anything still waiting will never get an answer on this socket.
+      setStatusById(failPending)
     }
   }, [])
 
   const sendSegment = useCallback(
     (segment: FinalSegment) => {
       if (!segment.text.trim()) return
-      send({ type: "segment", segment })
+      if (send({ type: "segment", segment })) {
+        setStatusById((prev) =>
+          withStatus(prev, [segment.segment_id], "queued")
+        )
+      }
     },
     [send]
   )
 
   // Flushes the server-side batch; the server replies "done" and closes.
-  const stop = useCallback(() => send({ type: "stop" }), [send])
+  const stop = useCallback(() => void send({ type: "stop" }), [send])
 
   useEffect(() => () => wsRef.current?.close(), [])
 
-  return { claims, skipped, error, connect, sendSegment, stop }
+  const claimsBySegment = useMemo(() => {
+    const grouped: Record<string, Claim[]> = {}
+    for (const claim of claims) {
+      ;(grouped[claim.segment_id] ??= []).push(claim)
+    }
+    return grouped
+  }, [claims])
+
+  return {
+    claims,
+    claimsBySegment,
+    statusById,
+    skipped,
+    error,
+    connect,
+    sendSegment,
+    stop,
+  }
 }

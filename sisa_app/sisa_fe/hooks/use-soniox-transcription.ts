@@ -300,6 +300,8 @@ export function useSonioxTranscription(languageHint = "en") {
     start,
     stop,
     claims: claimDetection.claims,
+    claimsBySegment: claimDetection.claimsBySegment,
+    claimStatus: claimDetection.statusById,
     skippedSegments: claimDetection.skipped,
     claimsError: claimDetection.error,
   }

@@ -4,6 +4,7 @@ import { IBM_Plex_Mono, Newsreader } from "next/font/google"
 import { useEffect, useMemo, useRef, useState } from "react"
 
 import { cn } from "@/lib/utils"
+import { ClaimLegend, ClaimText } from "@/components/claims/claim-text"
 import {
   useSonioxTranscription,
   type TranscriptStatus,
@@ -33,8 +34,17 @@ function controlLabel(status: TranscriptStatus) {
 }
 
 export function TranscribeCard() {
-  const { status, segments, interimText, error, start, stop } =
-    useSonioxTranscription()
+  const {
+    status,
+    segments,
+    interimText,
+    error,
+    start,
+    stop,
+    claimsBySegment,
+    claimStatus,
+    claimsError,
+  } = useSonioxTranscription()
   const bodyRef = useRef<HTMLDivElement>(null)
   const [tick, setTick] = useState(0)
 
@@ -109,6 +119,20 @@ export function TranscribeCard() {
       ) : null}
 
       <div
+        className={cn(
+          mono.className,
+          "flex items-center justify-between gap-3 px-5 pt-3 text-[10px] tracking-[0.08em] text-[#85858D] uppercase"
+        )}
+      >
+        <ClaimLegend />
+        {claimsError ? (
+          <span className="text-[#E8695C] normal-case" title={claimsError}>
+            Claim detection: {claimsError}
+          </span>
+        ) : null}
+      </div>
+
+      <div
         ref={bodyRef}
         className="flex max-h-[320px] min-h-[180px] flex-col gap-[18px] overflow-y-auto px-5 pt-4 pb-5"
         style={{
@@ -139,14 +163,15 @@ export function TranscribeCard() {
               >
                 SPEAKER {seg.speaker}
               </span>
-              <p
+              <ClaimText
+                text={seg.text}
+                claims={claimsBySegment[String(seg.id)]}
+                status={claimStatus[String(seg.id)]}
                 className={cn(
                   serif.className,
-                  "m-0 text-[20px] leading-[1.5] text-[#D6D6DA]"
+                  "text-[20px] leading-[1.5] text-[#D6D6DA]"
                 )}
-              >
-                {seg.text}
-              </p>
+              />
             </div>
           ))
         )}

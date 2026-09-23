@@ -4,6 +4,7 @@ import { IBM_Plex_Mono, Newsreader } from "next/font/google"
 import { useEffect, useRef, useState } from "react"
 
 import { cn } from "@/lib/utils"
+import { ClaimLegend, ClaimText } from "@/components/claims/claim-text"
 import { resumeMediaElementAudio } from "@/lib/audio-inputs"
 import { formatTime, youTubeEmbedUrl } from "@/lib/video"
 import {
@@ -26,6 +27,9 @@ export function VideoTranscribe() {
     interimText,
     error,
     stop,
+    claimsBySegment,
+    claimStatus,
+    claimsError,
     live,
     busy,
     locked,
@@ -273,6 +277,19 @@ export function VideoTranscribe() {
             {VIDEO_COPY.transcriptTitle}
           </div>
           <div
+            className={cn(
+              mono.className,
+              "flex flex-col gap-1 px-4 pt-2.5 text-[10px] tracking-[0.08em] text-[#85858D] uppercase"
+            )}
+          >
+            <ClaimLegend />
+            {claimsError ? (
+              <span className="text-[#E8695C] normal-case" title={claimsError}>
+                Claim detection: {claimsError}
+              </span>
+            ) : null}
+          </div>
+          <div
             ref={bodyRef}
             className="flex max-h-[460px] flex-1 flex-col gap-4 overflow-y-auto px-4 pt-3 pb-4"
           >
@@ -308,14 +325,15 @@ export function VideoTranscribe() {
                       SPEAKER {seg.speaker}
                     </span>
                   </div>
-                  <p
+                  <ClaimText
+                    text={seg.text}
+                    claims={claimsBySegment[String(seg.id)]}
+                    status={claimStatus[String(seg.id)]}
                     className={cn(
                       serif.className,
-                      "m-0 text-[17px] leading-[1.5] text-[#D6D6DA]"
+                      "text-[17px] leading-[1.5] text-[#D6D6DA]"
                     )}
-                  >
-                    {seg.text}
-                  </p>
+                  />
                 </div>
               ))
             )}
