@@ -2,6 +2,9 @@ services:
   api:
     build:
       context: ./sisa_api
+    env_file:
+      - path: ./sisa_api/.env
+        required: false
     ports:
       - "8000:8000"
     healthcheck:
