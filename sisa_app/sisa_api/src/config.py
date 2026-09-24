@@ -30,6 +30,20 @@ class Settings:
     )
     openstat_timeout_seconds: float = 15.0
 
+    # Official Gazette (primary source for laws and executive issuances).
+    # Search uses the site's own WordPress search delivered as RSS (/feed/?s=...);
+    # HTML pages sit behind a Cloudflare challenge and usually cannot be fetched.
+    official_gazette_base_url: str = os.environ.get(
+        "OFFICIAL_GAZETTE_BASE_URL", "https://www.officialgazette.gov.ph"
+    )
+    official_gazette_timeout_seconds: float = float(os.environ.get("OFFICIAL_GAZETTE_TIMEOUT_SECONDS", "20"))
+    official_gazette_user_agent: str = os.environ.get(
+        "OFFICIAL_GAZETTE_USER_AGENT", "SISA-FactCheck/0.1 (claim verification research prototype)"
+    )
+    # Be polite: at most this many requests per minute to the site from this process.
+    official_gazette_rpm: float = float(os.environ.get("OFFICIAL_GAZETTE_RPM", "30"))
+    official_gazette_cache_seconds: float = float(os.environ.get("OFFICIAL_GAZETTE_CACHE_SECONDS", "600"))
+
     # Claim detection (Gemini).
     gemini_api_key: str | None = os.environ.get("GEMINI_API_KEY") or None
     gemini_model: str = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")

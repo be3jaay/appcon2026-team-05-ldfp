@@ -5,7 +5,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
-from .routes import claims_routes, health_routes, openstat_routes, soniox_routes
+from .routes import (
+    claims_routes,
+    health_routes,
+    official_gazette_routes,
+    openstat_routes,
+    soniox_routes,
+)
 
 # Our loggers (src.*) print to the console next to uvicorn's; LOG_LEVEL=DEBUG for more.
 if hasattr(sys.stderr, "reconfigure"):
@@ -31,3 +37,4 @@ app.include_router(health_routes.router)
 app.include_router(soniox_routes.router)
 app.include_router(openstat_routes.router)
 app.include_router(claims_routes.router)
+app.include_router(official_gazette_routes.router)
