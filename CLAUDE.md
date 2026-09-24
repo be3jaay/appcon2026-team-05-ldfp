@@ -31,6 +31,12 @@ Rules to keep:
 - Prefilter: when unsure, keep. Word lists go in `WORD_LISTS` only.
 - Scope: detection and in-transcript highlighting only. Verification and persistence are separate work.
 
+## Claim verification
+
+`POST /api/v1/claims/verify` → `services/claim_verification_service.py`: STATISTICAL → `openstat_service` (don't change its behaviour), LEGAL → `official_gazette_service`. No LLM in verification. Keep assessments conservative: not found ≠ CONTRADICTED; a found document only SUPPORTS existence/issuance claims.
+
+Official Gazette: HTML pages are Cloudflare-protected for automated clients, so don't try to bypass that. Search goes through the site's RSS feed (`/feed/?s=`). Only return officialgazette.gov.ph URLs and the site's own text; never substitute Wikipedia/news/third-party sources.
+
 ## Security
 
 - `CORS_ALLOW_ORIGINS` (default `http://localhost:3000`) is the allowlist for CORS, for `/api/soniox/temporary-key` (403 otherwise), and for the claims websocket (closed with 1008 otherwise). Don't go back to `*`.

@@ -1,6 +1,6 @@
 # sisa_api
 
-FastAPI backend: Soniox temporary keys, PSA OpenSTAT claim checks, and live **claim detection**.
+FastAPI backend: Soniox temporary keys, live **claim detection**, and **claim verification** against official sources (PSA OpenSTAT, Official Gazette).
 
 ```bash
 uv sync
@@ -22,6 +22,11 @@ uv run pytest -q                 # no API keys or network needed
 | `CLAIMS_LLM_MAX_ATTEMPTS` | `4` | Attempts per call on 429/5xx. Uses Gemini's `retryDelay`, or 5 s/10 s/20 s backoff on overload |
 | `CLAIMS_MAX_SEGMENTS_PER_CALL` | `8` | Batches that queue while waiting for a call slot are merged into one call, up to this size |
 | `LOG_LEVEL` | `INFO` | Backend log level (`DEBUG` for more) |
+| `OFFICIAL_GAZETTE_BASE_URL` | `https://www.officialgazette.gov.ph` | Official Gazette site |
+| `OFFICIAL_GAZETTE_RPM` | `30` | Max requests/min to the Official Gazette from this process |
+| `OFFICIAL_GAZETTE_CACHE_SECONDS` | `600` | Identical searches are served from memory for this long |
+| `OFFICIAL_GAZETTE_TIMEOUT_SECONDS` | `20` | Per-request timeout |
+| `OFFICIAL_GAZETTE_USER_AGENT` | `SISA-FactCheck/0.1 (…)` | Honest User-Agent sent to the site |
 | `CLAIMS_BATCH_MAX_SEGMENTS` | `3` | Flush a batch at this many kept segments |
 | `CLAIMS_BATCH_MAX_WAIT_S` | `15` | Flush a batch this long after its first segment |
 | `CLAIMS_CONTEXT_SEGMENTS` | `2` | Previous final segments sent as CONTEXT-only lines |
@@ -101,6 +106,42 @@ Server → client:
 {"type": "done", "claims": 5, "skipped": 3, "llm_calls": 2}
 ```
 
+## Claim verification
+
+The detection LLM also returns, per claim, `check_type` (`STATISTICAL | LEGAL | OTHER`) and `entities` (the claim's parts) in the same call, so there is no extra LLM call. Verification itself uses **no LLM**; it routes the claim to an official source:
+
+| check_type | Source | What it can conclude |
+|---|---|---|
+| `STATISTICAL` | PSA OpenSTAT (existing `openstat_service`, unchanged) | SUPPORTED / CONTRADICTED against the published figure. Only the **unemployment rate** is connected so far |
+| `LEGAL` | Official Gazette search | SUPPORTED only for existence/issuance claims ("EO 124 was issued"). Content claims get NEEDS_CONTEXT plus the document. Not found is INSUFFICIENT_EVIDENCE, never CONTRADICTED |
+| `OTHER` | none yet | INSUFFICIENT_EVIDENCE |
+
+`POST /api/v1/claims/verify`
+```json
+{"claim": "The President issued Executive Order No. 124", "claim_type": "LEGAL",
+ "entities": {"document_type": "Executive Order", "document_number": "124", "subject": null, "date": null}}
+```
+```json
+{"claim": {"text": "The President issued Executive Order No. 124", "type": "LEGAL_ISSUANCE"},
+ "assessment": {"status": "SUPPORTED", "explanation": "A matching document was found in the Official Gazette: Executive Order No. 124, s. 2026 (published 2026-09-08); …"},
+ "evidence": [{"source": {"name": "Official Gazette of the Republic of the Philippines", "publisher": "Presidential Communications Office",
+     "source_type": "OFFICIAL_DOCUMENT", "document_type": "Executive Order", "document_number": "124", "date": "2026-09-08",
+     "title": "Executive Order No. 124, s. 2026", "url": "https://www.officialgazette.gov.ph/2026/09/08/executive-order-no-124-s-2026/"},
+   "data": {"relevant_text": "MALACAÑAN PALACE MANILA BY THE PRESIDENT OF THE PHILIPPINES EXECUTIVE ORDER NO. 124 ESTABLISHING …",
+     "document_reference": "Executive Order No. 124, s. 2026"},
+   "relevance": "DIRECT"}]}
+```
+Statistical claims return `source_type: "OFFICIAL_STATISTICS"` evidence with `value`, `unit`, `period`, `geography`. Source failures come back as `status: "ERROR"` with an explanation (HTTP 200), so the UI can show them next to the claim.
+
+## Official Gazette
+
+**How the site works** (checked Sept 2026): it is WordPress behind Cloudflare. HTML pages (home, `/?s=` search, document pages, `/wp-json`) answer automated clients with **403**: either a JavaScript challenge or a WAF "Sorry, you have been blocked" page. We do **not** try to get around that. The **RSS feed is served normally, and WordPress applies its site search to it**: `GET /feed/?s=<query>` returns up to 10 matching posts, each with the official title, permalink, publication date, categories and the opening text of the document. Document URLs look like `/YYYY/MM/DD/<slug>/`.
+
+- `POST /api/v1/official-gazette/search` with `{"query": "Executive Order No. 124", "limit": 10}`. A natural-language claim works too (`"The President issued Executive Order No. 124"`): a document reference is detected (EO/RA/Proclamation/AO/MC/PD/BP…, including "EO 124", "RA 11054", "Batas Republika Blg.") and searched in canonical form. Results naming that exact document are `relevance: "DIRECT"` and listed first. `document_type`/`document_number`/`series_year` are parsed from the title; `date` is the site's publication date; `snippet` is the site's own text. Fields that can't be determined are `null`.
+- `POST /api/v1/official-gazette/document` with `{"url": "https://www.officialgazette.gov.ph/…"}`. Only `https` URLs on `officialgazette.gov.ph` are accepted (400 otherwise, and no request is made). The page is fetched first. When Cloudflare blocks it (the usual case), the response falls back to the document's feed entry, with `text_scope: "FEED_EXCERPT"`. `issuing_authority` is set only when the text itself says it (e.g. "BY THE PRESIDENT OF THE PHILIPPINES").
+- `official_gazette_service.search_for_claim(StructuredLegalClaim)` accepts the detector's structured shape (`subject`/`predicate`/`object`/`context`) for later use.
+- Code: `clients/official_gazette_client.py` (HTTP + feed/page parsing, Cloudflare detection, URL validation, 429/`Retry-After`, timeouts, pacing), `services/official_gazette_service.py` (reference parsing, relevance, cache, document retrieval), `routes/official_gazette_routes.py`, `controllers/official_gazette_controller.py`, `models/official_gazette.py`.
+
 ### Tests
 
 `uv run pytest -q` runs everything with fake LLM clients and makes no network calls:
@@ -109,6 +150,8 @@ Server → client:
 - `test_classifier.py`: parsing, malformed output, context lines, splitting mixed sentences, one call per batch, identical system prompt
 - `test_detector.py`: a scripted Taglish session end to end with far fewer LLM calls than segments; merging alternating-speaker batches; retries and backoff; per-step logs
 - `test_rate_limiter.py`, `test_gemini_client.py`: pacing, and mapping Gemini 429/503 to retries (offline)
+- `test_official_gazette.py`: feed parsing on **real captured responses** (`tests/fixtures/official_gazette/`), Cloudflare challenge/WAF detection, URL validation, HTTP errors, relevance, caching, document fallback, routes
+- `test_claim_verification.py`: STATISTICAL→OpenSTAT and LEGAL→Official Gazette routing and the conservative assessments
 - `test_claims_ws.py`: websocket route, rejection of foreign origins, missing Gemini key
 - `test_eval_dataset.py`: eval file shape, and the prefilter never drops a labelled claim
 
@@ -130,4 +173,6 @@ Reads `data/eval/claim_detection.json`, which you can edit: `expected` lists one
 - **Diarization errors** from Soniox pass straight through: a wrong speaker label means a wrong `speaker` on the claim and an extra speaker-change flush.
 - Segments are Soniox utterances (`<end>`), not grammatical sentences, so a long utterance can hold several claims (the classifier splits them) and one sentence can be split across two segments.
 - Prompt caching: the system prompt is identical on every call, but live runs log `cached=None`, so Gemini isn't caching the ~1,065-token prompt. The token counts are logged per call.
-- No persistence and no verification: claims live only in the websocket session and the frontend hook state.
+- No persistence: claims live only in the websocket session and the frontend hook state. The frontend still shows mock evidence; wiring it to `/api/v1/claims/verify` is the next step.
+- Official Gazette: only the feed is reachable, so evidence text is the site's **opening excerpt**, not the full document. Search results are the site's own (WordPress) ranking, 10 per page. "1987 Constitution" finds documents that cite it, not the Constitution page itself.
+- OpenSTAT verification covers the unemployment rate only.
