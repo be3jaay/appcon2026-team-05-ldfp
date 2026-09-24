@@ -9,7 +9,7 @@ export interface TrustedSource {
   status: SourceStatus
 }
 
-/** Official sources claims are checked against. Only OpenSTAT is wired up today. */
+/** Official sources claims are checked against. OpenSTAT and the Official Gazette are wired up. */
 export const TRUSTED_SOURCES: TrustedSource[] = [
   {
     id: "psa",
@@ -41,7 +41,7 @@ export const TRUSTED_SOURCES: TrustedSource[] = [
     publisher: "Presidential Communications Office",
     covers: "Constitution, laws, executive orders",
     url: "https://www.officialgazette.gov.ph",
-    status: "planned",
+    status: "connected",
   },
   {
     id: "sc",

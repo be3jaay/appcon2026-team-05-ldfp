@@ -4,6 +4,8 @@ import { CircleAlert, LoaderCircle } from "lucide-react"
 import { useMemo, type ReactNode } from "react"
 
 import { cn } from "@/lib/utils"
+import { VERDICT_META, type Verdict } from "@/lib/verification"
+import { VerdictIcon } from "@/components/claims/verdict-badge"
 import type {
   Claim,
   ClaimType,
@@ -74,8 +76,20 @@ function locate(text: string, claims: Claim[]) {
   return { ranges, unplaced }
 }
 
-function describe(claim: Claim) {
+// Verdicts worth showing inline next to the words (the others are shown in panels).
+const INLINE_VERDICTS = new Set<Verdict>([
+  "factual",
+  "misleading",
+  "lacks-context",
+  "no-evidence",
+  "checking",
+])
+
+function describe(claim: Claim, verdict?: Verdict) {
   const parts = [
+    ...(verdict
+      ? [`${VERDICT_META[verdict].label}: ${VERDICT_META[verdict].description}`]
+      : []),
     `${claim.type.toUpperCase()} · ${Math.round(claim.checkworthiness * 100)}% check-worthy`,
     claim.text,
     claim.reason,
@@ -84,11 +98,19 @@ function describe(claim: Claim) {
   return parts.join("\n")
 }
 
-function ClaimMark({ claim, children }: { claim: Claim; children: ReactNode }) {
+function ClaimMark({
+  claim,
+  verdict,
+  children,
+}: {
+  claim: Claim
+  verdict?: Verdict
+  children: ReactNode
+}) {
   const color = CLAIM_COLORS[claim.type]
   return (
     <mark
-      title={describe(claim)}
+      title={describe(claim, verdict)}
       className="cursor-help rounded-[3px] px-[2px] text-inherit decoration-2 underline-offset-4"
       style={{
         backgroundColor: `${color}1f`,
@@ -97,6 +119,12 @@ function ClaimMark({ claim, children }: { claim: Claim; children: ReactNode }) {
       }}
     >
       {children}
+      {verdict && INLINE_VERDICTS.has(verdict) ? (
+        <VerdictIcon
+          verdict={verdict}
+          className="ml-1 h-[0.85em] w-[0.85em] -translate-y-px align-middle"
+        />
+      ) : null}
     </mark>
   )
 }
@@ -125,11 +153,11 @@ export function ClaimTypeChip({
   )
 }
 
-function ClaimChip({ claim }: { claim: Claim }) {
+function ClaimChip({ claim, verdict }: { claim: Claim; verdict?: Verdict }) {
   return (
     <ClaimTypeChip
       type={claim.type}
-      title={describe(claim)}
+      title={describe(claim, verdict)}
       className="ml-1.5 cursor-help align-middle"
     />
   )
@@ -143,11 +171,14 @@ export function ClaimText({
   text,
   claims = [],
   status,
+  verdicts = {},
   className,
 }: {
   text: string
   claims?: Claim[]
   status?: SegmentClaimStatus
+  /** Verification verdict per claim id. */
+  verdicts?: Record<string, Verdict>
   className?: string
 }) {
   const { ranges, unplaced } = useMemo(
@@ -160,7 +191,11 @@ export function ClaimText({
   for (const r of ranges) {
     if (r.start > cursor) pieces.push(text.slice(cursor, r.start))
     pieces.push(
-      <ClaimMark key={r.claim.id} claim={r.claim}>
+      <ClaimMark
+        key={r.claim.id}
+        claim={r.claim}
+        verdict={verdicts[r.claim.id]}
+      >
         {text.slice(r.start, r.end)}
       </ClaimMark>
     )
@@ -174,7 +209,7 @@ export function ClaimText({
     <p className={cn("m-0", className)}>
       {pieces}
       {unplaced.map((claim) => (
-        <ClaimChip key={claim.id} claim={claim} />
+        <ClaimChip key={claim.id} claim={claim} verdict={verdicts[claim.id]} />
       ))}
       {pending ? (
         <LoaderCircle

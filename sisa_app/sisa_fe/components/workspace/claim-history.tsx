@@ -5,24 +5,87 @@ import { ChevronRight, History, X } from "lucide-react"
 import { useState } from "react"
 
 import { cn } from "@/lib/utils"
+import {
+  STATEMENT_KIND,
+  isFactCheck,
+  verdictOf,
+  type VerifyState,
+} from "@/lib/verification"
 import type { Claim } from "@/hooks/use-claim-detection"
 import { ClaimTypeChip } from "@/components/claims/claim-text"
+import { VerdictBadge } from "@/components/claims/verdict-badge"
 import { claimTime } from "@/components/workspace/current-claim"
 import { Panel, PanelHeader } from "@/components/workspace/panel"
 
+type Tab = "checks" | "other"
+
+interface HistoryProps {
+  claims: Claim[]
+  verifications: Record<string, VerifyState>
+  onSelect: (id: string) => void
+}
+
+function split(claims: Claim[]) {
+  const checks = claims.filter(isFactCheck)
+  const other = claims.filter((c) => !isFactCheck(c))
+  return { checks, other }
+}
+
+function Tabs({
+  tab,
+  setTab,
+  counts,
+}: {
+  tab: Tab
+  setTab: (t: Tab) => void
+  counts: Record<Tab, number>
+}) {
+  const tabs: { id: Tab; label: string }[] = [
+    { id: "checks", label: "Fact-checks" },
+    { id: "other", label: "Other statements" },
+  ]
+  return (
+    <div
+      role="tablist"
+      className="flex gap-1 border-b border-line px-3 py-1.5"
+      aria-label="Claim history"
+    >
+      {tabs.map((t) => (
+        <button
+          key={t.id}
+          type="button"
+          role="tab"
+          aria-selected={tab === t.id}
+          onClick={() => setTab(t.id)}
+          className={cn(
+            "rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors",
+            tab === t.id
+              ? "bg-brand/[0.07] text-brand"
+              : "text-ink-muted hover:text-ink"
+          )}
+        >
+          {t.label}
+          <span className="ml-1.5 font-mono text-[10px] text-ink-faint">
+            {counts[t.id]}
+          </span>
+        </button>
+      ))}
+    </div>
+  )
+}
+
 function HistoryItems({
   claims,
-  currentId,
+  verifications,
   onSelect,
-}: {
-  claims: Claim[]
-  currentId?: string
-  onSelect: (id: string) => void
-}) {
+  tab,
+}: HistoryProps & { tab: Tab }) {
   if (claims.length === 0) {
     return (
       <p className="m-0 px-4 py-5 text-center text-[13px] text-ink-faint">
-        Earlier claims from this session will be listed here.
+        {tab === "checks"
+          ? "Fact-checked claims from this session will be listed here."
+          : "Opinions, promises, sarcasm, figures of speech and vague statements go here."}
       </p>
     )
   }
@@ -33,12 +96,14 @@ function HistoryItems({
           <button
             type="button"
             onClick={() => onSelect(claim.id)}
-            className={cn(
-              "flex w-full flex-col gap-1 px-4 py-2.5 text-left transition-colors hover:bg-canvas",
-              claim.id === currentId && "bg-brand/[0.05]"
-            )}
+            className="flex w-full flex-col gap-1 px-4 py-2.5 text-left transition-colors hover:bg-canvas"
           >
-            <span className="flex items-center gap-2">
+            <span className="flex flex-wrap items-center gap-2">
+              {tab === "checks" ? (
+                <VerdictBadge
+                  verdict={verdictOf(claim, verifications[claim.id])}
+                />
+              ) : null}
               <ClaimTypeChip type={claim.type} />
               <span className="font-mono text-[10px] text-ink-faint">
                 Speaker {claim.speaker}
@@ -48,6 +113,11 @@ function HistoryItems({
             <span className="line-clamp-2 text-[13px] leading-snug text-ink">
               {claim.text}
             </span>
+            {tab === "other" && STATEMENT_KIND[claim.type] ? (
+              <span className="text-[11px] leading-snug text-ink-faint">
+                {STATEMENT_KIND[claim.type]}
+              </span>
+            ) : null}
           </button>
         </li>
       ))}
@@ -55,43 +125,55 @@ function HistoryItems({
   )
 }
 
+function TabbedHistory(props: HistoryProps) {
+  const [tab, setTab] = useState<Tab>("checks")
+  const { checks, other } = split(props.claims)
+  return (
+    <>
+      <Tabs
+        tab={tab}
+        setTab={setTab}
+        counts={{ checks: checks.length, other: other.length }}
+      />
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <HistoryItems
+          {...props}
+          claims={tab === "checks" ? checks : other}
+          tab={tab}
+        />
+      </div>
+    </>
+  )
+}
+
 /** Desktop: a scrollable list in the side column. */
 export function ClaimHistoryList({
-  claims,
-  onSelect,
   className,
-}: {
-  claims: Claim[]
-  onSelect: (id: string) => void
-  className?: string
-}) {
+  ...props
+}: HistoryProps & { className?: string }) {
   return (
     <Panel className={cn("min-h-0", className)}>
       <PanelHeader
         title="Claim history"
         aside={
           <span className="rounded-full bg-canvas px-2 font-mono text-[11px] leading-5 text-ink-muted">
-            {claims.length}
+            {props.claims.length}
           </span>
         }
       />
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <HistoryItems claims={claims} onSelect={onSelect} />
-      </div>
+      <TabbedHistory {...props} />
     </Panel>
   )
 }
 
 /** Mobile: a badge that opens the history as a bottom sheet. */
-export function ClaimHistoryBadge({
-  claims,
-  onSelect,
-}: {
-  claims: Claim[]
-  onSelect: (id: string) => void
-}) {
+export function ClaimHistoryBadge(props: HistoryProps) {
   const [open, setOpen] = useState(false)
+  const { claims, verifications } = props
   const count = claims.length
+  const misleading = claims.filter(
+    (c) => verdictOf(c, verifications[c.id]) === "misleading"
+  ).length
 
   return (
     <Dialog.Root open={open} onOpenChange={setOpen}>
@@ -107,6 +189,12 @@ export function ClaimHistoryBadge({
             <>
               <b className="text-brand">{count}</b> earlier{" "}
               {count === 1 ? "claim" : "claims"} this session
+              {misleading > 0 ? (
+                <span className="text-[#B91C1C]">
+                  {" "}
+                  · {misleading} misleading
+                </span>
+              ) : null}
             </>
           )}
         </span>
@@ -127,11 +215,11 @@ export function ClaimHistoryBadge({
               <X className="h-4 w-4" />
             </Dialog.Close>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto pb-[env(safe-area-inset-bottom)]">
-            <HistoryItems
-              claims={claims}
+          <div className="flex min-h-0 flex-1 flex-col pb-[env(safe-area-inset-bottom)]">
+            <TabbedHistory
+              {...props}
               onSelect={(id) => {
-                onSelect(id)
+                props.onSelect(id)
                 setOpen(false)
               }}
             />

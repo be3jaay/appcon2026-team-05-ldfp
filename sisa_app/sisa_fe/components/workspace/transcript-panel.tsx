@@ -5,6 +5,7 @@ import { useEffect, useRef, type ReactNode } from "react"
 import { cn } from "@/lib/utils"
 import { formatTime } from "@/lib/video"
 import { VIDEO_COPY } from "@/constants/video"
+import type { Verdict } from "@/lib/verification"
 import type { useVideoTranscription } from "@/hooks/use-video-transcription"
 import { ClaimLegend, ClaimText } from "@/components/claims/claim-text"
 import { Panel, PanelHeader } from "@/components/workspace/panel"
@@ -13,10 +14,12 @@ type Session = ReturnType<typeof useVideoTranscription>
 
 export function TranscriptPanel({
   session,
+  verdicts,
   top,
   className,
 }: {
   session: Session
+  verdicts?: Record<string, Verdict>
   /** Rendered above the transcript lines (e.g. the mobile history badge). */
   top?: ReactNode
   className?: string
@@ -102,6 +105,7 @@ export function TranscriptPanel({
                 text={seg.text}
                 claims={claimsBySegment[String(seg.id)]}
                 status={claimStatus[String(seg.id)]}
+                verdicts={verdicts}
                 className="text-[15px] leading-[1.6] text-ink sm:text-[16px]"
               />
             </div>

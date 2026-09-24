@@ -9,6 +9,20 @@ const CLAIMS_WS_URL = `${apiWsBaseUrl}/api/v1/claims/ws`
 export type ClaimType =
   "fact" | "legal" | "opinion" | "promise" | "sarcasm" | "figurative" | "vague"
 
+/** Which official source can check it (set by the detector). */
+export type CheckType = "STATISTICAL" | "LEGAL" | "OTHER"
+
+export interface ClaimEntities {
+  metric?: string | null
+  value?: number | null
+  unit?: string | null
+  geography?: string | null
+  document_type?: string | null
+  document_number?: string | null
+  subject?: string | null
+  date?: string | null
+}
+
 export interface Claim {
   id: string
   segment_id: string
@@ -20,6 +34,8 @@ export interface Claim {
   checkworthiness: number
   reason: string
   literal_claim: string | null
+  check_type: CheckType
+  entities: ClaimEntities | null
 }
 
 export interface SkippedSegment {

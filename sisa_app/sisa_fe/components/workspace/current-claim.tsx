@@ -1,87 +1,118 @@
 "use client"
 
 import { ArrowUpRight, LoaderCircle, Radio } from "lucide-react"
-import { useMemo } from "react"
 
 import { cn } from "@/lib/utils"
 import { formatTime } from "@/lib/video"
-import { mockVerify, type Verification } from "@/lib/mock-verification"
+import {
+  METHOD_NOTE,
+  STATEMENT_KIND,
+  VERDICT_META,
+  verdictOf,
+  type EvidenceItem,
+  type VerifyState,
+} from "@/lib/verification"
 import type { Claim } from "@/hooks/use-claim-detection"
 import { ClaimTypeChip, CLAIM_COLORS } from "@/components/claims/claim-text"
-import { DemoBadge, Panel, PanelHeader } from "@/components/workspace/panel"
+import { VerdictBadge } from "@/components/claims/verdict-badge"
+import { Panel, PanelHeader } from "@/components/workspace/panel"
 
 export function claimTime(claim: Claim) {
   return claim.timestamp !== null ? formatTime(claim.timestamp / 1000) : null
 }
 
-function VerdictPill({ verification }: { verification: Verification }) {
-  const pending = verification.verdict === "pending"
+function formatValue(data: EvidenceItem["data"]) {
+  if (data.value === null) return null
+  const unit = data.unit === "percent" ? "%" : data.unit ? ` ${data.unit}` : ""
+  return [`${data.value.toLocaleString()}${unit}`, data.period, data.geography]
+    .filter(Boolean)
+    .join(" · ")
+}
+
+function EvidenceCard({ item }: { item: EvidenceItem }) {
+  const { source, data } = item
+  const value = formatValue(data)
   return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-semibold",
-        pending ? "bg-brand/[0.08] text-brand" : "bg-canvas text-ink-muted"
-      )}
-    >
-      <span
-        className={cn(
-          "h-1.5 w-1.5 rounded-full",
-          pending ? "bg-brand-sky" : "bg-ink-faint"
-        )}
-      />
-      {pending ? "Awaiting verification" : "Not checkable"}
-    </span>
+    <li className="rounded-lg border border-line bg-canvas/60 p-2.5">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="m-0 text-[13px] leading-snug font-semibold text-ink">
+            {source.title ?? source.name}
+          </p>
+          <p className="m-0 text-[11px] text-ink-faint">
+            {source.name}
+            {source.date ? ` · ${source.date}` : ""}
+          </p>
+        </div>
+        <span className="flex shrink-0 items-center gap-1.5">
+          <span
+            className={cn(
+              "rounded-full px-1.5 font-mono text-[9px] leading-4 tracking-[0.06em] uppercase",
+              item.relevance === "DIRECT"
+                ? "bg-brand-accent/10 text-brand-accent"
+                : "bg-canvas text-ink-faint"
+            )}
+          >
+            {item.relevance === "DIRECT" ? "Exact match" : "Related"}
+          </span>
+          <a
+            href={source.url}
+            target="_blank"
+            rel="noreferrer"
+            className="text-brand-accent hover:text-brand"
+            aria-label={`Open ${source.title ?? source.name}`}
+          >
+            <ArrowUpRight className="h-4 w-4" />
+          </a>
+        </span>
+      </div>
+      {value ? (
+        <p className="m-0 mt-1.5 text-[15px] font-semibold text-ink">{value}</p>
+      ) : null}
+      {data.relevant_text ? (
+        <blockquote className="m-0 mt-1.5 border-l-2 border-line pl-2 text-[12px] leading-relaxed text-ink-muted">
+          {data.relevant_text}
+        </blockquote>
+      ) : null}
+    </li>
   )
 }
 
-function Evidence({ verification }: { verification: Verification }) {
+function Evidence({
+  claim,
+  state,
+}: {
+  claim: Claim
+  state: VerifyState | undefined
+}) {
+  const verdict = verdictOf(claim, state)
+  const meta = VERDICT_META[verdict]
+  const result = state?.state === "done" ? state.result : null
+
+  let explanation: string = meta.description
+  if (result) explanation = result.assessment.explanation
+  else if (state?.state === "failed") explanation = state.message
+  else if (verdict === "not-checkable")
+    explanation = STATEMENT_KIND[claim.type] ?? meta.description
+
+  const methodNote = result ? METHOD_NOTE[result.assessment.method] : null
+
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between gap-2">
         <h3 className="m-0 text-[11px] font-semibold tracking-[0.12em] text-brand uppercase">
-          Evidence found
+          {verdict === "not-checkable" ? "Statement" : "Verification"}
         </h3>
-        <DemoBadge />
+        <VerdictBadge verdict={verdict} />
       </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <VerdictPill verification={verification} />
-      </div>
-      <p className="m-0 text-[12px] leading-relaxed text-ink-muted">
-        {verification.summary}
-      </p>
-      {verification.evidence.length ? (
+      <p className="m-0 text-[13px] leading-relaxed text-ink">{explanation}</p>
+      {methodNote ? (
+        <p className="m-0 text-[11px] text-ink-faint italic">{methodNote}</p>
+      ) : null}
+      {result?.evidence.length ? (
         <ul className="m-0 flex list-none flex-col gap-2 p-0">
-          {verification.evidence.map((item) => (
-            <li
-              key={item.source.id}
-              className="rounded-lg border border-line bg-canvas/60 p-2.5"
-            >
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="m-0 text-[13px] font-semibold text-ink">
-                    {item.source.name}
-                  </p>
-                  <p className="m-0 text-[11px] text-ink-faint">
-                    {item.source.publisher}
-                  </p>
-                </div>
-                <a
-                  href={item.source.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="shrink-0 text-brand-accent hover:text-brand"
-                  aria-label={`Open ${item.source.name}`}
-                >
-                  <ArrowUpRight className="h-4 w-4" />
-                </a>
-              </div>
-              <p className="m-0 mt-1.5 font-mono text-[11px] leading-snug break-words text-ink-muted">
-                Query: “{item.query}”
-              </p>
-              <p className="m-0 mt-1 text-[12px] text-ink-muted italic">
-                {item.note}
-              </p>
-            </li>
+          {result.evidence.map((item) => (
+            <EvidenceCard key={item.source.url} item={item} />
           ))}
         </ul>
       ) : null}
@@ -91,6 +122,7 @@ function Evidence({ verification }: { verification: Verification }) {
 
 export function CurrentClaim({
   claim,
+  verifyState,
   following,
   pendingCount,
   onFollowLive,
@@ -98,23 +130,19 @@ export function CurrentClaim({
   className,
 }: {
   claim: Claim | null
+  verifyState: VerifyState | undefined
   following: boolean
   pendingCount: number
   onFollowLive: () => void
   compact?: boolean
   className?: string
 }) {
-  const verification = useMemo(
-    () => (claim ? mockVerify(claim) : null),
-    [claim]
-  )
-
   const aside = following ? (
     <span className="flex items-center gap-1.5 text-[11px] text-ink-muted">
       {pendingCount > 0 ? (
         <>
           <LoaderCircle className="h-3.5 w-3.5 animate-spin text-brand-accent" />
-          Checking {pendingCount} {pendingCount === 1 ? "line" : "lines"}
+          Detecting in {pendingCount} {pendingCount === 1 ? "line" : "lines"}
         </>
       ) : (
         <>
@@ -133,10 +161,12 @@ export function CurrentClaim({
     </button>
   )
 
+  const verdict = claim ? verdictOf(claim, verifyState) : null
+
   return (
     <Panel className={className}>
       <PanelHeader title="Current claim" aside={aside} />
-      {!claim || !verification ? (
+      {!claim || !verdict ? (
         <p className="m-0 px-4 py-6 text-center text-[13px] leading-relaxed text-ink-faint">
           No claims detected yet.
           <br />
@@ -145,6 +175,7 @@ export function CurrentClaim({
       ) : (
         <div className="flex flex-col gap-3 p-4">
           <div className="flex flex-wrap items-center gap-2">
+            <VerdictBadge verdict={verdict} size="lg" />
             <ClaimTypeChip type={claim.type} />
             <span className="font-mono text-[11px] text-ink-faint">
               Speaker {claim.speaker}
@@ -170,43 +201,46 @@ export function CurrentClaim({
             {claim.text}
           </p>
 
-          <div className="flex items-center gap-2">
-            <span className="text-[11px] text-ink-faint">Check-worthiness</span>
-            <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-canvas">
-              <span
-                className="block h-full rounded-full bg-brand-accent"
-                style={{ width: `${Math.round(claim.checkworthiness * 100)}%` }}
-              />
-            </span>
-            <span className="font-mono text-[11px] text-ink-muted">
-              {Math.round(claim.checkworthiness * 100)}%
-            </span>
-          </div>
-
-          {!compact ? (
-            <p className="m-0 text-[12px] leading-relaxed text-ink-muted">
-              {claim.reason}
-            </p>
-          ) : null}
           {claim.literal_claim ? (
             <p className="m-0 rounded-lg bg-canvas px-2.5 py-2 text-[12px] leading-relaxed text-ink-muted">
               <b className="text-ink">Literal claim:</b> {claim.literal_claim}
             </p>
           ) : null}
 
+          {!compact ? (
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-ink-faint">
+                Check-worthiness
+              </span>
+              <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-canvas">
+                <span
+                  className="block h-full rounded-full bg-brand-accent"
+                  style={{
+                    width: `${Math.round(claim.checkworthiness * 100)}%`,
+                  }}
+                />
+              </span>
+              <span className="font-mono text-[11px] text-ink-muted">
+                {Math.round(claim.checkworthiness * 100)}%
+              </span>
+            </div>
+          ) : null}
+
           {compact ? (
             <details className="group border-t border-line pt-2.5">
               <summary className="flex cursor-pointer list-none items-center justify-between text-[12px] font-semibold text-brand-accent">
-                Evidence ({verification.evidence.length})
+                {verifyState?.state === "done"
+                  ? `Evidence (${verifyState.result.evidence.length})`
+                  : "Details"}
                 <span className="text-ink-faint group-open:rotate-180">⌄</span>
               </summary>
               <div className="pt-2.5">
-                <Evidence verification={verification} />
+                <Evidence claim={claim} state={verifyState} />
               </div>
             </details>
           ) : (
             <div className="border-t border-line pt-3">
-              <Evidence verification={verification} />
+              <Evidence claim={claim} state={verifyState} />
             </div>
           )}
         </div>

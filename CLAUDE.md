@@ -34,9 +34,13 @@ Rules to keep:
 
 ## Claim verification
 
-`POST /api/v1/claims/verify` → `services/claim_verification_service.py`: STATISTICAL → `openstat_service` (don't change its behaviour), LEGAL → `official_gazette_service`. No LLM in verification. Keep assessments conservative: not found ≠ CONTRADICTED; a found document only SUPPORTS existence/issuance claims.
+`POST /api/v1/claims/verify` → `services/claim_verification_service.py`: STATISTICAL → `openstat_service` (don't change its behaviour), LEGAL → `official_gazette_service`. The only LLM use in verification is `services/evidence_judge.py` (compares a content claim with the official excerpt it is given). Keep assessments conservative: not found ≠ CONTRADICTED; a found document only SUPPORTS existence/issuance claims.
 
 Official Gazette: HTML pages are Cloudflare-protected for automated clients, so don't try to bypass that. Search goes through the site's RSS feed (`/feed/?s=`). Only return officialgazette.gov.ph URLs and the site's own text; never substitute Wikipedia/news/third-party sources.
+
+## Frontend verdicts
+
+`hooks/use-claim-verification.ts` sends every claim with `check_type` STATISTICAL/LEGAL to `/api/v1/claims/verify`, one request at a time. `lib/verification.ts` maps statuses to the UI: SUPPORTED → Factual, CONTRADICTED → Misleading, INSUFFICIENT_EVIDENCE → No evidence, NEEDS_CONTEXT → Lacks context. Opinion/promise/sarcasm/figurative/vague go under "Other statements".
 
 ## Security
 

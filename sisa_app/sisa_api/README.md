@@ -123,7 +123,7 @@ The detection LLM also returns, per claim, `check_type` (`STATISTICAL | LEGAL | 
 | check_type | Source | What it can conclude |
 |---|---|---|
 | `STATISTICAL` | PSA OpenSTAT (existing `openstat_service`, unchanged) | SUPPORTED / CONTRADICTED against the published figure. Only the **unemployment rate** is connected so far |
-| `LEGAL` | Official Gazette search | SUPPORTED only for existence/issuance claims ("EO 124 was issued"). Content claims get NEEDS_CONTEXT plus the document. Not found is INSUFFICIENT_EVIDENCE, never CONTRADICTED |
+| `LEGAL` | Official Gazette search | Existence/issuance claims ("EO 124 was issued"): SUPPORTED when the document is found. Content claims ("EO 124 reorganized DPWH"): one LLM call compares the claim with the official excerpt, giving SUPPORTED / CONTRADICTED, or NEEDS_CONTEXT if the excerpt doesn't settle it. Not found is INSUFFICIENT_EVIDENCE, never CONTRADICTED |
 | `OTHER` | none yet | INSUFFICIENT_EVIDENCE |
 
 `POST /api/v1/claims/verify`
@@ -186,6 +186,7 @@ Reads `data/eval/claim_detection.json`, which you can edit: `expected` lists one
 - **Diarization errors** from Soniox pass straight through: a wrong speaker label means a wrong `speaker` on the claim and an extra speaker-change flush.
 - Segments are Soniox utterances (`<end>`), not grammatical sentences, so a long utterance can hold several claims (the classifier splits them) and one sentence can be split across two segments.
 - Prompt caching: the system prompt is identical on every call, but live runs log `cached=None`, so Gemini isn't caching the ~1,065-token prompt. The token counts (and cached tokens, when a provider reports them) are logged per call.
-- No persistence: claims live only in the websocket session and the frontend hook state. The frontend still shows mock evidence; wiring it to `/api/v1/claims/verify` is the next step.
+- No persistence: claims live only in the websocket session and the frontend hook state.
+- Content claims about a found document ("EO 124 reorganized DPWH") are judged by one LLM call against the Official Gazette excerpt only (`services/evidence_judge.py`, method `AI_COMPARISON`). It can miss details that are beyond the opening text; those stay NEEDS_CONTEXT.
 - Official Gazette: only the feed is reachable, so evidence text is the site's **opening excerpt**, not the full document. Search results are the site's own (WordPress) ranking, 10 per page. "1987 Constitution" finds documents that cite it, not the Constitution page itself.
 - OpenSTAT verification covers the unemployment rate only.
