@@ -8,6 +8,7 @@ import {
   METHOD_NOTE,
   STATEMENT_KIND,
   VERDICT_META,
+  ratingVerdict,
   verdictOf,
   type EvidenceItem,
   type VerifyState,
@@ -73,7 +74,11 @@ function EvidenceCard({ item }: { item: EvidenceItem }) {
                 : "bg-canvas text-ink-faint"
             )}
           >
-            {item.relevance === "DIRECT" ? "Exact match" : "Related"}
+            {item.relevance === "DIRECT"
+              ? source.source_type === "PUBLISHED_FACT_CHECK"
+                ? "Same claim"
+                : "Exact match"
+              : "Related"}
           </span>
           <a
             href={source.url}
@@ -88,6 +93,27 @@ function EvidenceCard({ item }: { item: EvidenceItem }) {
       </div>
       {value ? (
         <p className="m-0 mt-1.5 text-[15px] font-semibold text-ink">{value}</p>
+      ) : null}
+      {data.rating ? (
+        <p className="m-0 mt-1.5 flex flex-wrap items-center gap-1.5 text-[12px] text-ink-muted">
+          Rated
+          <span
+            className="rounded-full px-2 text-[12px] leading-5 font-semibold"
+            style={{
+              color:
+                VERDICT_META[ratingVerdict(data.rating) ?? "no-evidence"].color,
+              backgroundColor: `${VERDICT_META[ratingVerdict(data.rating) ?? "no-evidence"].color}14`,
+            }}
+          >
+            {data.rating}
+          </span>
+          {data.claimant ? <span>· claim by {data.claimant}</span> : null}
+        </p>
+      ) : null}
+      {data.relevant_text && source.source_type === "PUBLISHED_FACT_CHECK" ? (
+        <p className="m-0 mt-1 text-[11px] font-semibold tracking-[0.06em] text-ink-faint uppercase">
+          Reviewed claim
+        </p>
       ) : null}
       {data.relevant_text ? (
         <blockquote className="m-0 mt-1.5 border-l-2 border-line pl-2 text-[12px] leading-relaxed text-ink-muted">

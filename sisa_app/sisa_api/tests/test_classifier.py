@@ -282,3 +282,9 @@ def test_schema_and_prompt_ask_for_check_type():
     assert props["check_type"]["enum"] == ["STATISTICAL", "LEGAL", "OTHER"]
     assert {"metric", "value", "document_type", "document_number"} <= set(props["entities"]["properties"])
     assert '"check_type"' in SYSTEM_PROMPT and '"entities"' in SYSTEM_PROMPT
+
+
+def test_text_en_is_parsed():
+    raw = json.dumps({"claims": [item(1, "Naubos ang pondo", text_en="The funds ran out")]})
+    assert parse_claims(raw, BATCH)[0].text_en == "The funds ran out"
+    assert parse_claims(json.dumps({"claims": [item(1, "x")]}), BATCH)[0].text_en is None

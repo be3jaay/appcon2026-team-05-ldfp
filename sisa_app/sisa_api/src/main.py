@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import settings
 from .routes import (
     claims_routes,
+    factcheck_routes,
     flood_control_routes,
     health_routes,
     official_gazette_routes,
@@ -40,3 +41,4 @@ app.include_router(openstat_routes.router)
 app.include_router(claims_routes.router)
 app.include_router(official_gazette_routes.router)
 app.include_router(flood_control_routes.router)
+app.include_router(factcheck_routes.router)

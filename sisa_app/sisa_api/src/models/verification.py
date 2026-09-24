@@ -6,7 +6,7 @@ from .claims import CheckType, ClaimEntities
 from .openstat import VerificationStatus
 
 VerifiedClaimType = Literal["STATISTICAL", "LEGAL_ISSUANCE", "OTHER"]
-SourceType = Literal["OFFICIAL_STATISTICS", "OFFICIAL_DOCUMENT", "GOVERNMENT_DATASET"]
+SourceType = Literal["OFFICIAL_STATISTICS", "OFFICIAL_DOCUMENT", "GOVERNMENT_DATASET", "PUBLISHED_FACT_CHECK"]
 
 
 class VerifyClaimRequest(BaseModel):
@@ -36,6 +36,9 @@ class VerifyClaimRequest(BaseModel):
     )
 
     claim: str = Field(min_length=3, max_length=500)
+    search_text: str | None = Field(
+        None, max_length=500, description="English version of the claim (the detector's text_en), used to search fact-checks."
+    )
     claim_type: CheckType
     entities: ClaimEntities = ClaimEntities()
 
@@ -45,7 +48,7 @@ class VerifiedClaim(BaseModel):
     type: VerifiedClaimType
 
 
-AssessmentMethod = Literal["OFFICIAL_DATA", "DOCUMENT_MATCH", "AI_COMPARISON", "NONE"]
+AssessmentMethod = Literal["OFFICIAL_DATA", "DOCUMENT_MATCH", "AI_COMPARISON", "PUBLISHED_FACT_CHECK", "NONE"]
 
 
 class Assessment(BaseModel):
@@ -55,7 +58,8 @@ class Assessment(BaseModel):
         "NONE",
         description=(
             "OFFICIAL_DATA: compared with a published figure; DOCUMENT_MATCH: the named document was "
-            "(not) found; AI_COMPARISON: an LLM compared the claim with the official text shown as evidence."
+            "(not) found; AI_COMPARISON: an LLM compared the claim with the official text shown as evidence; "
+            "PUBLISHED_FACT_CHECK: an independent fact-checker's published rating of the same claim."
         ),
     )
 
@@ -80,6 +84,8 @@ class EvidenceData(BaseModel):
     unit: str | None = None
     period: str | None = None
     geography: str | None = None
+    rating: str | None = Field(None, description="A fact-checker's own rating, verbatim (e.g. 'False').")
+    claimant: str | None = Field(None, description="Who made the claim that was fact-checked.")
 
 
 class EvidenceItem(BaseModel):

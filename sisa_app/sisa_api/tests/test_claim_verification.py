@@ -157,8 +157,9 @@ async def test_unsupported_metric_does_not_call_openstat(monkeypatch):
 
     monkeypatch.setattr(openstat_service, "check_claim", boom)
     res = await verification.verify(statistical("Inflation was 3.9%", metric="inflation rate", value=3.9))
-    assert res.assessment.status == "INSUFFICIENT_EVIDENCE"
-    assert "unemployment rate only" in res.assessment.explanation
+    assert res.assessment.status == "NO_SOURCE"
+    assert "no data source for 'inflation rate'" in res.assessment.explanation
+    assert "OpenSTAT" not in res.assessment.explanation  # plain language, no internals
 
 
 async def test_statistical_without_metric():
@@ -177,7 +178,7 @@ async def test_openstat_error_is_reported(monkeypatch):
 
 async def test_other_claims_have_no_source():
     res = await verification.verify(VerifyClaimRequest(claim="Traffic is terrible", claim_type="OTHER"))
-    assert res.claim.type == "OTHER" and res.assessment.status == "INSUFFICIENT_EVIDENCE"
+    assert res.claim.type == "OTHER" and res.assessment.status == "NO_SOURCE"
 
 
 # --- route ---------------------------------------------------------------------------

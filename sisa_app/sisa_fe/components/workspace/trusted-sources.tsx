@@ -1,8 +1,21 @@
+"use client"
+
 import { ArrowUpRight, ShieldCheck } from "lucide-react"
 
 import { cn } from "@/lib/utils"
-import { TRUSTED_SOURCES, type TrustedSource } from "@/constants/sources"
+import {
+  TRUSTED_SOURCES,
+  type SourceStatus,
+  type TrustedSource,
+} from "@/constants/sources"
+import { useSourcesStatus } from "@/hooks/use-sources-status"
 import { Panel, PanelHeader } from "@/components/workspace/panel"
+
+const STATUS_LABEL: Record<SourceStatus, string> = {
+  connected: "Connected",
+  planned: "Planned",
+  "needs-key": "Needs API key",
+}
 
 function SourceRow({ source }: { source: TrustedSource }) {
   const connected = source.status === "connected"
@@ -33,7 +46,7 @@ function SourceRow({ source }: { source: TrustedSource }) {
                 : "bg-canvas text-ink-faint"
             )}
           >
-            {connected ? "Connected" : "Planned"}
+            {STATUS_LABEL[source.status]}
           </span>
         </div>
         <p className="m-0 text-[11px] leading-snug text-ink-faint">
@@ -51,9 +64,18 @@ export function TrustedSources({
   collapsible?: boolean
   className?: string
 }) {
+  const live = useSourcesStatus()
+  const sources = TRUSTED_SOURCES.map((s) =>
+    s.id === "factcheck" && live
+      ? {
+          ...s,
+          status: (live.factcheck ? "connected" : "needs-key") as SourceStatus,
+        }
+      : s
+  )
   const list = (
     <ul className="m-0 list-none p-0">
-      {TRUSTED_SOURCES.map((s) => (
+      {sources.map((s) => (
         <SourceRow key={s.id} source={s} />
       ))}
     </ul>

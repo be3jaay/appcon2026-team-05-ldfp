@@ -3,7 +3,8 @@
 STATISTICAL -> DPWH flood control project records (flood control claims), else
                PSA OpenSTAT (existing openstat_service, unchanged)
 LEGAL       -> Official Gazette search
-OTHER       -> no automated source yet
+OTHER       -> no data source; like any claim our data cannot settle, it falls back to
+               published fact-checks (Google Fact Check Tools) when FACTCHECK_API_KEY is set
 
 Assessments are conservative: a document that is not found in a search is
 never reported as CONTRADICTED, and a found document only SUPPORTS claims
@@ -28,7 +29,9 @@ from ..models.verification import (
     VerifyClaimRequest,
 )
 from ..models.flood_control import FLOOD_CONTROL_PAGE_URL, FLOOD_CONTROL_PUBLISHER, FLOOD_CONTROL_SOURCE_NAME
-from . import evidence_judge, flood_control_service, official_gazette_service, openstat_service
+from ..clients.factcheck_client import FactCheckClientError
+from ..models.factcheck import PublishedFactCheck
+from . import evidence_judge, factcheck_service, flood_control_service, official_gazette_service, openstat_service
 from .claims.classifier import LLMClient
 from .claims.rate_limiter import RateLimiter
 from .openstat_parser import OpenStatParseError
@@ -45,20 +48,99 @@ _METRIC_ALIASES = {
 _MAX_EVIDENCE = 3
 
 
+_CONNECTED = (
+    "Connected sources cover the unemployment rate (PSA), DPWH flood control projects, "
+    "and laws and executive issuances (Official Gazette)."
+)
+
+
+def _no_source(topic: str | None = None) -> str:
+    about = f"'{topic}'" if topic else "this kind of claim"
+    return f"SISA has no data source for {about} yet, so it was not checked. {_CONNECTED}"
+
+
 async def verify(
     req: VerifyClaimRequest, llm: LLMClient | None = None, rate_limiter: RateLimiter | None = None
 ) -> VerificationResponse:
-    """`llm` is optional: without it, content claims about a found document stay NEEDS_CONTEXT."""
+    """`llm` is optional: without it, content claims about a found document stay NEEDS_CONTEXT
+    and published fact-checks are only listed as related, never used as the verdict."""
     if req.claim_type == "STATISTICAL":
-        return await _verify_statistical(req.claim, req.entities)
-    if req.claim_type == "LEGAL":
-        return await _verify_legal(req.claim, req.entities, llm, rate_limiter)
-    return VerificationResponse(
-        claim=VerifiedClaim(text=req.claim, type="OTHER"),
-        assessment=Assessment(
-            status="INSUFFICIENT_EVIDENCE",
-            explanation="No official source is connected for this kind of claim yet.",
+        result = await _verify_statistical(req.claim, req.entities)
+    elif req.claim_type == "LEGAL":
+        result = await _verify_legal(req.claim, req.entities, llm, rate_limiter)
+    else:
+        result = VerificationResponse(
+            claim=VerifiedClaim(text=req.claim, type="OTHER"),
+            assessment=Assessment(status="NO_SOURCE", explanation=_no_source()),
+        )
+    if result.assessment.status in ("NO_SOURCE", "INSUFFICIENT_EVIDENCE"):
+        result = await _with_published_fact_checks(req.search_text or req.claim, result, llm, rate_limiter)
+    return result
+
+
+# --- Published fact-checks (Google Fact Check Tools) ---------------------------------
+
+
+def _fact_check_evidence(check: PublishedFactCheck, relevance: str) -> EvidenceItem:
+    return EvidenceItem(
+        source=EvidenceSource(
+            name=check.publisher or check.publisher_site or "Fact-checker",
+            publisher=check.publisher_site or check.publisher or "Fact-checker",
+            source_type="PUBLISHED_FACT_CHECK",
+            url=check.url,
+            title=check.title,
+            date=check.review_date,
         ),
+        data=EvidenceData(relevant_text=check.claim_text, rating=check.rating, claimant=check.claimant),
+        relevance=relevance,
+    )
+
+
+async def _with_published_fact_checks(
+    text: str, result: VerificationResponse, llm: LLMClient | None, rate_limiter: RateLimiter | None
+) -> VerificationResponse:
+    """For claims our data couldn't settle: use a published fact-check of the SAME claim as
+    the verdict (rating mapped to ours); list other hits as related. No key -> unchanged."""
+    if not factcheck_service.is_configured():
+        return result
+    try:
+        found = await factcheck_service.search(text, max_results=6)
+    except FactCheckClientError as exc:
+        logger.warning("fact-check search failed: %s", exc.message)
+        return result
+    if not found.results:
+        result.assessment.explanation += " No published fact-check of it was found either."
+        return result
+
+    matched = await factcheck_service.match(text, found.results, llm, rate_limiter)
+    related = [_fact_check_evidence(c, "RELATED") for c in matched.related[:_MAX_EVIDENCE]]
+    rated = [(c, factcheck_service.rating_status(c.rating)) for c in matched.same]
+    usable = [(c, s) for c, s in rated if s]
+
+    if not usable:
+        if matched.same or related:
+            result.evidence.extend([_fact_check_evidence(c, "DIRECT") for c in matched.same] + related)
+            result.assessment.explanation += " Related published fact-checks are listed below."
+        return result
+
+    statuses = {s for _, s in usable}
+    lead, _ = usable[0]
+    who = lead.publisher or lead.publisher_site or "A fact-checker"
+    when = f" ({lead.review_date})" if lead.review_date else ""
+    if len(statuses) > 1:
+        status = "NEEDS_CONTEXT"
+        explanation = "Fact-checkers rated this claim differently: " + "; ".join(
+            f"{c.publisher or c.publisher_site}: “{c.rating}”" for c, _ in usable
+        ) + "."
+    else:
+        status = statuses.pop()
+        explanation = f"{who} rated a matching claim “{lead.rating}”{when}."
+        if lead.claim_text:
+            explanation += f" Reviewed claim: “{lead.claim_text}”."
+    return VerificationResponse(
+        claim=result.claim,
+        assessment=Assessment(status=status, explanation=explanation, method="PUBLISHED_FACT_CHECK"),
+        evidence=[_fact_check_evidence(c, "DIRECT") for c, _ in usable[:_MAX_EVIDENCE]] + related,
     )
 
 
@@ -81,11 +163,7 @@ async def _verify_statistical(text: str, entities: ClaimEntities) -> Verificatio
     try:
         openstat_service.resolve_dataset(metric)
     except openstat_service.UnsupportedMetricError:
-        return result(
-            "INSUFFICIENT_EVIDENCE",
-            f"'{entities.metric}' is not connected yet. PSA OpenSTAT checks currently support the "
-            "unemployment rate only.",
-        )
+        return result("NO_SOURCE", _no_source(entities.metric))
 
     try:
         checked = await openstat_service.check_claim(

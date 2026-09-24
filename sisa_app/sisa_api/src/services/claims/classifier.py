@@ -89,6 +89,8 @@ may be labelled; genuine questions are not claims.
 spelling, no paraphrase), as short as possible while still containing the claim.
 - "text": the claim restated as one short, self-contained sentence in the speaker's language, \
 resolving pronouns from context where obvious. Do not add facts that were not said.
+- "text_en": the same claim in English (identical to "text" if already English), used to \
+search English-language sources.
 - "checkworthiness": 0 to 1, how worth fact-checking it is: high (0.7–1) for specific, \
 consequential fact/legal claims; medium for hedged or partly specific ones; low (0–0.3) for \
 opinion, promise and vague.
@@ -110,7 +112,7 @@ if clearly national), contractor (the company named, if any). LEGAL: document_ty
 - Do not judge whether a claim is true. Only detect and label.
 
 Return ONLY JSON of this shape:
-{"claims": [{"segment": <number of the segment>, "quote": "...", "text": "...", "type": "fact|legal|opinion|\
+{"claims": [{"segment": <number of the segment>, "quote": "...", "text": "...", "text_en": "...", "type": "fact|legal|opinion|\
 promise|sarcasm|figurative|vague", "checkworthiness": 0.0, "reason": "...", "literal_claim": "", "check_type": "STATISTICAL|LEGAL|OTHER", "entities": {...only the fields that apply...}}]}
 Example entities: STATISTICAL {"metric": "unemployment rate", "value": 5, "unit": "percent", "date": "July 2026", "geography": "Philippines"}; LEGAL {"document_type": "Executive Order", "document_number": "124"}; OTHER {}.
 If there are no claims, return {"claims": []}.
@@ -127,6 +129,7 @@ RESPONSE_SCHEMA: dict[str, Any] = {
                     "segment": {"type": "integer"},
                     "quote": {"type": "string"},
                     "text": {"type": "string"},
+                    "text_en": {"type": "string"},
                     "type": {"type": "string", "enum": list(CLAIM_TYPES)},
                     "checkworthiness": {"type": "number"},
                     "reason": {"type": "string"},
@@ -181,6 +184,7 @@ class _RawClaim(BaseModel):
     segment: int
     text: str
     quote: str | None = None
+    text_en: str | None = None
     type: str = "vague"
     checkworthiness: float = 0.5
     reason: str = ""
@@ -247,7 +251,7 @@ class _RawClaim(BaseModel):
     def _reason_str(cls, v: Any) -> str:
         return "" if v is None else str(v).strip()
 
-    @field_validator("quote", "literal_claim", mode="before")
+    @field_validator("quote", "literal_claim", "text_en", mode="before")
     @classmethod
     def _literal_str(cls, v: Any) -> str | None:
         if v is None:
@@ -334,6 +338,7 @@ def parse_claims(raw: str, batch: list[TranscriptSegment]) -> list[Claim]:
                 speaker=seg.speaker,
                 text=parsed.text,
                 quote=verbatim_quote(parsed.quote, seg.text),
+                text_en=parsed.text_en,
                 type=parsed.type,
                 checkworthiness=parsed.checkworthiness,
                 reason=parsed.reason or _DEFAULT_REASONS.get(parsed.type, f"Labelled as {parsed.type}."),

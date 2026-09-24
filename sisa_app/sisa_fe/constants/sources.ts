@@ -1,4 +1,4 @@
-export type SourceStatus = "connected" | "planned"
+export type SourceStatus = "connected" | "planned" | "needs-key"
 
 export interface TrustedSource {
   id: string
@@ -27,6 +27,17 @@ export const TRUSTED_SOURCES: TrustedSource[] = [
       "9,855 flood control contracts, 2018–2025: cost, contractor, location",
     url: "https://github.com/bettergovph/bettergov/tree/main/src/data/flood_control",
     status: "connected",
+  },
+  {
+    id: "factcheck",
+    name: "Google Fact Check Tools",
+    publisher:
+      "Published fact-checks (ClaimReview) by independent fact-checkers",
+    covers:
+      "Claims already reviewed by fact-checkers; used when no data source covers a claim",
+    url: "https://toolbox.google.com/factcheck/explorer",
+    // Real status comes from GET /api/v1/sources/status (needs FACTCHECK_API_KEY).
+    status: "needs-key",
   },
   {
     id: "coa",

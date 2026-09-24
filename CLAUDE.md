@@ -34,7 +34,7 @@ Rules to keep:
 
 ## Claim verification
 
-`POST /api/v1/claims/verify` → `services/claim_verification_service.py`: STATISTICAL flood-control claims → `flood_control_service` (DPWH records via BetterGov.ph, a compiled dataset: label it as such), other STATISTICAL → `openstat_service` (don't change its behaviour), LEGAL → `official_gazette_service`. The only LLM use in verification is `services/evidence_judge.py` (compares a content claim with the official excerpt it is given). Keep assessments conservative: not found ≠ CONTRADICTED; a found document only SUPPORTS existence/issuance claims.
+`POST /api/v1/claims/verify` → `services/claim_verification_service.py`: STATISTICAL flood-control claims → `flood_control_service` (DPWH records via BetterGov.ph, a compiled dataset: label it as such), other STATISTICAL → `openstat_service` (don't change its behaviour), LEGAL → `official_gazette_service`. Anything our data can't settle (NO_SOURCE / INSUFFICIENT_EVIDENCE) falls back to published fact-checks (`factcheck_service`, Google Fact Check Tools, `FACTCHECK_API_KEY`); only a same-claim match with a clear rating may set the verdict. The only LLM use in verification is `services/evidence_judge.py` (compares a content claim with the official excerpt it is given). Keep assessments conservative: not found ≠ CONTRADICTED; a found document only SUPPORTS existence/issuance claims.
 
 Official Gazette: HTML pages are Cloudflare-protected for automated clients, so don't try to bypass that. Search goes through the site's RSS feed (`/feed/?s=`). Only return officialgazette.gov.ph URLs and the site's own text; never substitute Wikipedia/news/third-party sources.
 

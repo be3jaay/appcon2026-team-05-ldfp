@@ -30,6 +30,8 @@ export interface Claim {
   speaker: string
   text: string
   quote: string | null
+  /** The claim in English (for searching English-language sources). */
+  text_en: string | null
   type: ClaimType
   checkworthiness: number
   reason: string

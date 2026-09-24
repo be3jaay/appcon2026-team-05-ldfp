@@ -19,6 +19,7 @@ async function verify(claim: Claim): Promise<VerificationResult> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       claim: claim.text.slice(0, MAX_CLAIM_LENGTH),
+      search_text: claim.text_en?.slice(0, MAX_CLAIM_LENGTH) ?? null,
       claim_type: claim.check_type,
       entities: claim.entities ?? {},
     }),

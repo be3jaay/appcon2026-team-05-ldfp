@@ -67,6 +67,7 @@ class Claim(BaseModel):
     speaker: str
     text: str
     quote: str | None = Field(None, description="Verbatim words in the segment; None if not found.")
+    text_en: str | None = Field(None, description="The claim in English, for searching English-language sources.")
     type: ClaimType
     checkworthiness: float = Field(ge=0, le=1)
     reason: str

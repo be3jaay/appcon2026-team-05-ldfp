@@ -40,6 +40,14 @@ class Settings:
     flood_control_max_age_hours: float = float(os.environ.get("FLOOD_CONTROL_MAX_AGE_HOURS", "168"))
     flood_control_timeout_seconds: float = float(os.environ.get("FLOOD_CONTROL_TIMEOUT_SECONDS", "120"))
 
+    # Google Fact Check Tools API (published ClaimReview fact-checks). Key: Google Cloud
+    # console -> enable "Fact Check Tools API" -> Credentials -> API key (starts with AIza).
+    factcheck_api_key: str | None = os.environ.get("FACTCHECK_API_KEY") or None
+    factcheck_api_url: str = "https://factchecktools.googleapis.com/v1alpha1/claims:search"
+    factcheck_timeout_seconds: float = float(os.environ.get("FACTCHECK_TIMEOUT_SECONDS", "15"))
+    factcheck_page_size: int = int(os.environ.get("FACTCHECK_PAGE_SIZE", "10"))
+    factcheck_cache_seconds: float = float(os.environ.get("FACTCHECK_CACHE_SECONDS", "86400"))
+
     # Official Gazette (primary source for laws and executive issuances).
     # Search uses the site's own WordPress search delivered as RSS (/feed/?s=...);
     # HTML pages sit behind a Cloudflare challenge and usually cannot be fetched.

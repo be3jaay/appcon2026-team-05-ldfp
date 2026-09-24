@@ -6,17 +6,25 @@ export type VerificationStatus =
   | "CONTRADICTED"
   | "NEEDS_CONTEXT"
   | "INSUFFICIENT_EVIDENCE"
+  | "NO_SOURCE"
   | "ERROR"
 
 export type AssessmentMethod =
-  "OFFICIAL_DATA" | "DOCUMENT_MATCH" | "AI_COMPARISON" | "NONE"
+  | "OFFICIAL_DATA"
+  | "DOCUMENT_MATCH"
+  | "AI_COMPARISON"
+  | "PUBLISHED_FACT_CHECK"
+  | "NONE"
 
 export interface EvidenceItem {
   source: {
     name: string
     publisher: string
     source_type:
-      "OFFICIAL_STATISTICS" | "OFFICIAL_DOCUMENT" | "GOVERNMENT_DATASET"
+      | "OFFICIAL_STATISTICS"
+      | "OFFICIAL_DOCUMENT"
+      | "GOVERNMENT_DATASET"
+      | "PUBLISHED_FACT_CHECK"
     url: string
     title: string | null
     date: string | null
@@ -32,6 +40,9 @@ export interface EvidenceItem {
     unit: string | null
     period: string | null
     geography: string | null
+    /** A fact-checker's own rating, verbatim. */
+    rating: string | null
+    claimant: string | null
   }
   relevance: "DIRECT" | "RELATED"
 }
@@ -67,6 +78,7 @@ const STATUS_VERDICT: Record<VerificationStatus, Verdict> = {
   CONTRADICTED: "misleading",
   NEEDS_CONTEXT: "lacks-context",
   INSUFFICIENT_EVIDENCE: "no-evidence",
+  NO_SOURCE: "no-source",
   ERROR: "error",
 }
 
@@ -77,12 +89,12 @@ export const VERDICT_META: Record<
   factual: {
     label: "Factual",
     color: "#15803D",
-    description: "Official sources support this claim.",
+    description: "Official data or a published fact-check supports this claim.",
   },
   misleading: {
     label: "Misleading",
     color: "#B91C1C",
-    description: "Official sources say something different.",
+    description: "Official data or a published fact-check says otherwise.",
   },
   "lacks-context": {
     label: "Lacks context",
@@ -110,7 +122,7 @@ export const VERDICT_META: Record<
     label: "No source yet",
     color: "#8A97A8",
     description:
-      "Checkable, but no official source for this kind of claim is connected yet.",
+      "Not checked: none of SISA's sources cover this kind of claim yet.",
   },
   "not-checkable": {
     label: "Not checkable",
@@ -136,25 +148,56 @@ export const METHOD_NOTE: Record<AssessmentMethod, string | null> = {
   DOCUMENT_MATCH: "Matched against Official Gazette records.",
   AI_COMPARISON:
     "AI compared the claim with the official text shown below. Check the source.",
+  PUBLISHED_FACT_CHECK:
+    "Based on an independent fact-checker's published rating of the same claim (their verdict, not SISA's data).",
   NONE: null,
 }
 
-/** Claims that go to /verify: the detector found a source that can check them. */
+/**
+ * Claims sent to /verify: anything the detector routed to a data source, plus every
+ * fact/legal claim (the backend falls back to published fact-checks, or says
+ * "no source").
+ */
 export function isVerifiable(claim: Claim): boolean {
-  return claim.check_type === "STATISTICAL" || claim.check_type === "LEGAL"
+  return (
+    claim.check_type === "STATISTICAL" ||
+    claim.check_type === "LEGAL" ||
+    claim.type === "fact" ||
+    claim.type === "legal"
+  )
 }
 
 /** "Fact-checks" tab vs "Other statements" tab. */
 export function isFactCheck(claim: Claim): boolean {
-  return isVerifiable(claim) || claim.type === "fact" || claim.type === "legal"
+  return isVerifiable(claim)
+}
+
+/** Verdict implied by a fact-checker's own rating words (for colouring the rating chip). */
+export function ratingVerdict(rating: string | null): Verdict | null {
+  if (!rating) return null
+  const r = rating.toLowerCase()
+  if (
+    /missing context|needs context|half[ -]true|unproven|unverified|kulang sa konteksto/.test(
+      r
+    )
+  )
+    return "lacks-context"
+  if (
+    /false|fake|hoax|mislead|incorrect|inaccurate|fabricat|distort|exaggerat|not true|untrue|\bmali\b|hindi totoo|peke/.test(
+      r
+    )
+  )
+    return "misleading"
+  if (/\btrue\b|\baccurate\b|\bcorrect\b|\btotoo\b|\btama\b/.test(r))
+    return "factual"
+  return null
 }
 
 export function verdictOf(
   claim: Claim,
   state: VerifyState | undefined
 ): Verdict {
-  if (!isVerifiable(claim))
-    return isFactCheck(claim) ? "no-source" : "not-checkable"
+  if (!isVerifiable(claim)) return "not-checkable"
   if (!state || state.state === "checking") return "checking"
   if (state.state === "failed") return "error"
   return STATUS_VERDICT[state.result.assessment.status]
