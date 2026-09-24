@@ -101,6 +101,22 @@ async def run_session(websocket: WebSocket, llm_factory: LLMFactory) -> None:
         await websocket.close(code=1003)
 
 
+_verify_llm: LLMClient | None = None
+
+
+def _llm_for_verification() -> LLMClient | None:
+    """Same provider chain as detection, kept for the process so provider cooldowns persist.
+    None when no provider is configured: content claims then stay NEEDS_CONTEXT."""
+    global _verify_llm
+    if _verify_llm is None:
+        try:
+            _verify_llm = build_llm_client()
+        except LLMConfigError as exc:
+            logger.warning("claim verification without LLM comparison: %s", exc)
+            return None
+    return _verify_llm
+
+
 async def verify_claim(req: VerifyClaimRequest) -> VerificationResponse:
     """Source errors come back as status ERROR in the body, so the UI can show them next to the claim."""
-    return await claim_verification_service.verify(req)
+    return await claim_verification_service.verify(req, _llm_for_verification(), shared_rate_limiter())

@@ -45,9 +45,19 @@ class VerifiedClaim(BaseModel):
     type: VerifiedClaimType
 
 
+AssessmentMethod = Literal["OFFICIAL_DATA", "DOCUMENT_MATCH", "AI_COMPARISON", "NONE"]
+
+
 class Assessment(BaseModel):
     status: VerificationStatus
     explanation: str
+    method: AssessmentMethod = Field(
+        "NONE",
+        description=(
+            "OFFICIAL_DATA: compared with a published figure; DOCUMENT_MATCH: the named document was "
+            "(not) found; AI_COMPARISON: an LLM compared the claim with the official text shown as evidence."
+        ),
+    )
 
 
 class EvidenceSource(BaseModel):

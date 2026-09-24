@@ -26,7 +26,9 @@ from ..models.verification import (
     VerifiedClaim,
     VerifyClaimRequest,
 )
-from . import official_gazette_service, openstat_service
+from . import evidence_judge, official_gazette_service, openstat_service
+from .claims.classifier import LLMClient
+from .claims.rate_limiter import RateLimiter
 from .openstat_parser import OpenStatParseError
 
 logger = logging.getLogger(__name__)
@@ -41,11 +43,14 @@ _METRIC_ALIASES = {
 _MAX_EVIDENCE = 3
 
 
-async def verify(req: VerifyClaimRequest) -> VerificationResponse:
+async def verify(
+    req: VerifyClaimRequest, llm: LLMClient | None = None, rate_limiter: RateLimiter | None = None
+) -> VerificationResponse:
+    """`llm` is optional: without it, content claims about a found document stay NEEDS_CONTEXT."""
     if req.claim_type == "STATISTICAL":
         return await _verify_statistical(req.claim, req.entities)
     if req.claim_type == "LEGAL":
-        return await _verify_legal(req.claim, req.entities)
+        return await _verify_legal(req.claim, req.entities, llm, rate_limiter)
     return VerificationResponse(
         claim=VerifiedClaim(text=req.claim, type="OTHER"),
         assessment=Assessment(
@@ -95,7 +100,10 @@ async def _verify_statistical(text: str, entities: ClaimEntities) -> Verificatio
         logger.warning("OpenSTAT response could not be interpreted for claim %r", text)
         return result("ERROR", "OpenSTAT returned data in an unexpected structure.")
 
-    return result(checked.status, checked.explanation or checked.message or "", _openstat_evidence(checked))
+    response = result(checked.status, checked.explanation or checked.message or "", _openstat_evidence(checked))
+    if checked.evidence is not None:
+        response.assessment.method = "OFFICIAL_DATA"
+    return response
 
 
 def _openstat_evidence(checked: OpenStatCheckResponse) -> list[EvidenceItem]:
@@ -158,7 +166,9 @@ def _gazette_evidence(result: OfficialGazetteResult) -> EvidenceItem:
     )
 
 
-async def _verify_legal(text: str, entities: ClaimEntities) -> VerificationResponse:
+async def _verify_legal(
+    text: str, entities: ClaimEntities, llm: LLMClient | None, rate_limiter: RateLimiter | None
+) -> VerificationResponse:
     claim = VerifiedClaim(text=text, type="LEGAL_ISSUANCE")
     query = _legal_query(text, entities)
     try:
@@ -172,6 +182,7 @@ async def _verify_legal(text: str, entities: ClaimEntities) -> VerificationRespo
     shown = direct if (direct or wanted) else found.results
     evidence = [_gazette_evidence(r) for r in shown[:_MAX_EVIDENCE]]
 
+    method = "DOCUMENT_MATCH" if wanted else "NONE"
     if direct and not entities.subject:
         titles = "; ".join(f"{r.title} (published {r.date})" if r.date else r.title for r in direct[:_MAX_EVIDENCE])
         explanation = f"A matching document was found in the Official Gazette: {titles}."
@@ -184,6 +195,16 @@ async def _verify_legal(text: str, entities: ClaimEntities) -> VerificationRespo
             f"{direct[0].title} was found in the Official Gazette. Compare its text with what the "
             f"claim says it does ({entities.subject})."
         )
+        judgement = None
+        if llm is not None:
+            judgement = await evidence_judge.judge(
+                text,
+                [evidence_judge.DocumentText(r.title, r.snippet) for r in direct[:_MAX_EVIDENCE]],
+                llm,
+                rate_limiter,
+            )
+        if judgement is not None:
+            status, explanation, method = judgement.verdict, judgement.explanation, "AI_COMPARISON"
     elif wanted:
         status = "INSUFFICIENT_EVIDENCE"
         explanation = (
@@ -198,4 +219,6 @@ async def _verify_legal(text: str, entities: ClaimEntities) -> VerificationRespo
         status = "INSUFFICIENT_EVIDENCE"
         explanation = "No related documents were found in the Official Gazette search."
 
-    return VerificationResponse(claim=claim, assessment=Assessment(status=status, explanation=explanation), evidence=evidence)
+    return VerificationResponse(
+        claim=claim, assessment=Assessment(status=status, explanation=explanation, method=method), evidence=evidence
+    )

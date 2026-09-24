@@ -202,3 +202,82 @@ def test_verify_route_accepts_detector_shape(gazette):
 def test_verify_route_rejects_unknown_claim_type():
     r = TestClient(app).post("/api/v1/claims/verify", json={"claim": "abc def", "claim_type": "ASTROLOGY"})
     assert r.status_code == 422
+
+
+# --- AI comparison of content claims against the official text --------------------------
+
+from src.services import evidence_judge  # noqa: E402
+from src.services.claims.classifier import RetryableLLMError  # noqa: E402
+
+from .conftest import FakeLLM  # noqa: E402
+
+
+async def test_content_claim_contradicted_by_official_text(gazette):
+    llm = FakeLLM({"verdict": "CONTRADICTED", "explanation": "The text says it establishes the EduPhil program."})
+    res = await verification.verify(
+        legal(
+            "Executive Order No. 124 was issued in 2026 to reorganize DPWH",
+            document_type="Executive Order",
+            document_number="124",
+            date="2026",
+            subject="reorganize DPWH",
+        ),
+        llm=llm,
+    )
+    assert res.assessment.status == "CONTRADICTED"
+    assert res.assessment.method == "AI_COMPARISON"
+    assert "EduPhil" in res.assessment.explanation
+    assert llm.call_count == 1
+    prompt = llm.calls[0]["user"]
+    assert "CLAIM: Executive Order No. 124 was issued in 2026 to reorganize DPWH" in prompt
+    assert "DOCUMENT 1: Executive Order No. 124, s. 2026" in prompt
+    assert "EDUCATION PHILIPPINES (EDUPHIL) PROGRAM" in prompt  # the official excerpt is what's judged
+    assert "s. 2021" not in prompt  # the year narrowed it to one document
+    assert llm.calls[0]["system"] == evidence_judge.JUDGE_PROMPT
+
+
+async def test_existence_claims_never_call_the_llm(gazette):
+    llm = FakeLLM({"verdict": "CONTRADICTED", "explanation": "x"})
+    res = await verification.verify(
+        legal("EO 124 was issued", document_type="Executive Order", document_number="124"), llm=llm
+    )
+    assert res.assessment.status == "SUPPORTED" and res.assessment.method == "DOCUMENT_MATCH"
+    assert llm.call_count == 0
+
+
+@pytest.mark.parametrize(
+    "llm",
+    [
+        FakeLLM(RetryableLLMError("503", 2.0)),
+        FakeLLM("not json"),
+        FakeLLM({"verdict": "MAYBE", "explanation": "x"}),
+        FakeLLM({"verdict": "SUPPORTED", "explanation": ""}),
+    ],
+)
+async def test_comparison_failure_falls_back_to_needs_context(gazette, llm):
+    res = await verification.verify(
+        legal("EO 124 created a new tax", document_type="Executive Order", document_number="124", subject="new tax"),
+        llm=llm,
+    )
+    assert res.assessment.status == "NEEDS_CONTEXT"
+    assert res.assessment.method == "DOCUMENT_MATCH"
+
+
+async def test_statistical_method_is_official_data(monkeypatch):
+    async def fake_check(req):
+        return openstat_response("SUPPORTED")
+
+    monkeypatch.setattr(openstat_service, "check_claim", fake_check)
+    res = await verification.verify(statistical("Unemployment 6%", metric="unemployment rate", value=6))
+    assert res.assessment.method == "OFFICIAL_DATA"
+
+
+def test_judge_prompt_forbids_absence_as_contradiction():
+    assert "NOT a contradiction" in evidence_judge.JUDGE_PROMPT
+    assert "Do not use outside knowledge" in evidence_judge.JUDGE_PROMPT
+
+
+async def test_judge_skips_when_no_text():
+    llm = FakeLLM({"verdict": "SUPPORTED", "explanation": "x"})
+    assert await evidence_judge.judge("c", [evidence_judge.DocumentText("t", None)], llm) is None
+    assert llm.call_count == 0
