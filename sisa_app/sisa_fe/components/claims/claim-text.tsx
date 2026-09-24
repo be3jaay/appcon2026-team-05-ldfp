@@ -1,10 +1,11 @@
 "use client"
 
-import { CircleAlert, LoaderCircle } from "lucide-react"
+import { CircleAlert } from "lucide-react"
 import { useMemo, type ReactNode } from "react"
 
 import { cn } from "@/lib/utils"
-import { VERDICT_META, type Verdict } from "@/lib/verification"
+import { checkingSources, VERDICT_META, type Verdict } from "@/lib/verification"
+import { CheckingStatus } from "@/components/claims/checking-status"
 import { VerdictIcon } from "@/components/claims/verdict-badge"
 import type {
   Claim,
@@ -37,6 +38,11 @@ const STATUS_TITLES: Partial<Record<SegmentClaimStatus, string>> = {
   queued: "Queued for claim detection…",
   checking: "Checking for claims…",
   error: "Claim detection failed for this line",
+}
+
+const DETECTION_LABELS: Partial<Record<SegmentClaimStatus, string[]>> = {
+  queued: ["Queued…"],
+  checking: ["Reading the line…", "Looking for claims…"],
 }
 
 interface Range {
@@ -163,9 +169,17 @@ function ClaimChip({ claim, verdict }: { claim: Claim; verdict?: Verdict }) {
   )
 }
 
+/** Sources still being consulted for this line, newest claim first. */
+function sourcesInFlight(claims: Claim[], verdicts: Record<string, Verdict>) {
+  const checking = claims.filter((c) => verdicts[c.id] === "checking")
+  const labels = checking.flatMap(checkingSources).map((s) => `Checking ${s}…`)
+  return [...new Set(labels)]
+}
+
 /**
- * Transcript text with detected claims highlighted by type, and a spinner
- * while the segment is still waiting for / going through claim detection.
+ * Transcript text with detected claims highlighted by type. While a line is
+ * still being processed it names what is happening - the detector reading the
+ * line, then each source its claims are checked against.
  */
 export function ClaimText({
   text,
@@ -203,7 +217,16 @@ export function ClaimText({
   }
   if (cursor < text.length) pieces.push(text.slice(cursor))
 
-  const pending = status === "queued" || status === "checking"
+  const inFlight = useMemo(
+    () => sourcesInFlight(claims, verdicts),
+    [claims, verdicts]
+  )
+  // Detection comes first; once claims exist, name the sources they go to.
+  const activity = inFlight.length
+    ? inFlight
+    : status === "queued" || status === "checking"
+      ? (DETECTION_LABELS[status] ?? [])
+      : []
 
   return (
     <p className={cn("m-0", className)}>
@@ -211,16 +234,12 @@ export function ClaimText({
       {unplaced.map((claim) => (
         <ClaimChip key={claim.id} claim={claim} verdict={verdicts[claim.id]} />
       ))}
-      {pending ? (
-        <LoaderCircle
-          aria-label={STATUS_TITLES[status]}
-          className={cn(
-            "ml-1.5 inline-block h-[0.8em] w-[0.8em] animate-spin align-baseline",
-            status === "queued" ? "text-ink-faint" : "text-brand-accent"
-          )}
-        >
-          <title>{STATUS_TITLES[status]}</title>
-        </LoaderCircle>
+      {activity.length ? (
+        <CheckingStatus
+          labels={activity}
+          muted={!inFlight.length && status === "queued"}
+          title={inFlight.length || !status ? undefined : STATUS_TITLES[status]}
+        />
       ) : null}
       {status === "error" ? (
         <CircleAlert

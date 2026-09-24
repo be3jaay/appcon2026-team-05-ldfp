@@ -5,6 +5,7 @@ import { useMemo } from "react"
 import { verdictOf } from "@/lib/verification"
 import { useClaimFeed } from "@/hooks/use-claim-feed"
 import { useClaimVerification } from "@/hooks/use-claim-verification"
+import { useSessionSummary } from "@/hooks/use-session-summary"
 import { useVideoTranscription } from "@/hooks/use-video-transcription"
 import { AppHeader } from "@/components/workspace/app-header"
 import {
@@ -13,6 +14,7 @@ import {
 } from "@/components/workspace/claim-history"
 import { CurrentClaim } from "@/components/workspace/current-claim"
 import { MediaPanel } from "@/components/workspace/media-panel"
+import { SessionSummary } from "@/components/workspace/session-summary"
 import { TranscriptPanel } from "@/components/workspace/transcript-panel"
 import { TrustedSources } from "@/components/workspace/trusted-sources"
 
@@ -31,6 +33,13 @@ export function Workspace() {
     [session.segments]
   )
   const verifications = useClaimVerification(session.claims, segmentText)
+  const summary = useSessionSummary({
+    status: session.status,
+    segments: session.segments,
+    claims: session.claims,
+    claimStatus: session.claimStatus,
+    verifications,
+  })
   const verdicts = useMemo(
     () =>
       Object.fromEntries(
@@ -74,6 +83,8 @@ export function Workspace() {
             verdicts={verdicts}
             className="lg:h-[460px]"
           />
+
+          <SessionSummary summary={summary} />
 
           <TrustedSources collapsible className="lg:hidden" />
         </div>

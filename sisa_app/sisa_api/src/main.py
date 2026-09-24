@@ -12,6 +12,7 @@ from .routes import (
     health_routes,
     official_gazette_routes,
     openstat_routes,
+    session_summary_routes,
     soniox_routes,
 )
 
@@ -42,3 +43,4 @@ app.include_router(claims_routes.router)
 app.include_router(official_gazette_routes.router)
 app.include_router(flood_control_routes.router)
 app.include_router(factcheck_routes.router)
+app.include_router(session_summary_routes.router)

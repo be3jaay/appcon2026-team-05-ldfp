@@ -12,6 +12,14 @@ def _csv(value: str) -> list[str]:
 class Settings:
     soniox_api_key: str | None = os.environ.get("SONIOX_API_KEY") or None
     soniox_temporary_key_url: str = "https://api.soniox.com/v1/auth/temporary-api-key"
+
+    # Soniox Text-to-Speech (REST): end-of-session Tagalog summary audio. Reuses SONIOX_API_KEY.
+    soniox_tts_url: str = os.environ.get("SONIOX_TTS_URL", "https://tts-rt.soniox.com/tts")
+    soniox_tts_model: str = os.environ.get("SONIOX_TTS_MODEL", "tts-rt-v2")
+    soniox_tts_voice: str = os.environ.get("SONIOX_TTS_VOICE", "Adrian")
+    soniox_tts_language: str = os.environ.get("SONIOX_TTS_LANGUAGE", "tl")
+    soniox_tts_audio_format: str = os.environ.get("SONIOX_TTS_AUDIO_FORMAT", "mp3")
+    soniox_tts_timeout_seconds: float = float(os.environ.get("SONIOX_TTS_TIMEOUT_SECONDS", "20"))
     # Browser origins allowed to call the API (CORS) and open websockets.
     # Comma-separated, e.g. "http://localhost:3000,https://sisa.example.com".
     cors_allow_origins: list[str] = _csv(

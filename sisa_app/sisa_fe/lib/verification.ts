@@ -1,3 +1,4 @@
+import { SOURCES_BY_ID } from "@/constants/sources"
 import type { Claim, ClaimType } from "@/hooks/use-claim-detection"
 
 /** Response of POST /api/v1/claims/verify (see sisa_api/src/models/verification.py). */
@@ -170,6 +171,34 @@ export function isVerifiable(claim: Claim): boolean {
 /** "Fact-checks" tab vs "Other statements" tab. */
 export function isFactCheck(claim: Claim): boolean {
   return isVerifiable(claim)
+}
+
+// Same words the backend uses to route a statistical claim to the DPWH records.
+const FLOOD_CONTROL = /flood|baha|dike|revetment|drainage|slope protection/i
+
+function sourceName(id: string, fallback: string): string {
+  return SOURCES_BY_ID[id]?.shortName ?? fallback
+}
+
+/**
+ * The sources the backend will consult for this claim, in order (see
+ * claim_verification_service.verify). Used to name them while a check runs.
+ */
+export function checkingSources(claim: Claim): string[] {
+  const factChecks = sourceName("factcheck", "published fact-checks")
+  if (claim.check_type === "STATISTICAL") {
+    const subject = `${claim.entities?.metric ?? ""} ${claim.text}`
+    return [
+      FLOOD_CONTROL.test(subject)
+        ? sourceName("flood-control", "DPWH flood control records")
+        : sourceName("psa", "PSA OpenSTAT"),
+      factChecks,
+    ]
+  }
+  if (claim.check_type === "LEGAL") {
+    return [sourceName("gazette", "Official Gazette"), factChecks]
+  }
+  return [factChecks]
 }
 
 /** Verdict implied by a fact-checker's own rating words (for colouring the rating chip). */

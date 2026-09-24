@@ -24,8 +24,8 @@ export const YOUTUBE_PATH_ID_PATTERN = /^\/(?:embed|live|shorts)\/([\w-]{11})/
 export const VIDEO_CONTROL_LABELS: Record<TranscriptStatus, string> = {
   idle: "Start",
   connecting: "Connecting…",
-  live: "Stop",
-  stopping: "Stopping…",
+  live: "End & summarize",
+  stopping: "Ending…",
   error: "Start",
 }
 
