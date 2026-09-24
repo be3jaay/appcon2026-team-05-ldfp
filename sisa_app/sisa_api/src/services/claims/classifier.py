@@ -12,7 +12,7 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, ValidationError, field_validator
 
-from ...models.claims import CLAIM_TYPES, Claim, TranscriptSegment
+from ...models.claims import CHECK_TYPES, CLAIM_TYPES, Claim, ClaimEntities, TranscriptSegment
 
 logger = logging.getLogger(__name__)
 
@@ -91,11 +91,13 @@ opinion, promise and vague.
 - "reason": one short English sentence explaining the label.
 - "literal_claim": for figurative and sarcasm, the plain checkable claim, or "" if there is \
 none; for other types, "".
+- "check_type": which official source could check it. "STATISTICAL" for official statistics (rates, counts, prices, population, GDP, poverty, budgets as published figures). "LEGAL" for claims about a law, the Constitution or an issuance (Republic Act, Executive Order, Proclamation, Administrative Order, Memorandum Circular…): that it exists, was signed/issued, or what it says. Otherwise "OTHER". Opinion, promise and vague claims are "OTHER".
+- "entities": the claim's parts as fields; omit or leave empty what the speaker did not say, never guess. STATISTICAL: metric (e.g. "unemployment rate"), value (number only), unit ("percent", "pesos", "persons"…), date (period, e.g. "July 2026"), geography (default "Philippines" only if clearly national). LEGAL: document_type (e.g. "Executive Order"), document_number (e.g. "124"), date, subject (what the document is claimed to do or contain, or empty if the claim is only that it exists or was issued).
 - Do not judge whether a claim is true. Only detect and label.
 
 Return ONLY JSON of this shape:
 {"claims": [{"segment": <number of the segment>, "quote": "...", "text": "...", "type": "fact|legal|opinion|\
-promise|sarcasm|figurative|vague", "checkworthiness": 0.0, "reason": "...", "literal_claim": ""}]}
+promise|sarcasm|figurative|vague", "checkworthiness": 0.0, "reason": "...", "literal_claim": "", "check_type": "STATISTICAL|LEGAL|OTHER", "entities": {"metric": "", "value": 0, "unit": "", "date": "", "geography": "", "document_type": "", "document_number": "", "subject": ""}}]}
 If there are no claims, return {"claims": []}.
 """
 
@@ -114,6 +116,20 @@ RESPONSE_SCHEMA: dict[str, Any] = {
                     "checkworthiness": {"type": "number"},
                     "reason": {"type": "string"},
                     "literal_claim": {"type": "string"},
+                    "check_type": {"type": "string", "enum": list(CHECK_TYPES)},
+                    "entities": {
+                        "type": "object",
+                        "properties": {
+                            "metric": {"type": "string"},
+                            "value": {"type": "number"},
+                            "unit": {"type": "string"},
+                            "date": {"type": "string"},
+                            "geography": {"type": "string"},
+                            "document_type": {"type": "string"},
+                            "document_number": {"type": "string"},
+                            "subject": {"type": "string"},
+                        },
+                    },
                 },
                 "required": ["segment", "quote", "text", "type", "checkworthiness", "reason"],
             },
@@ -121,6 +137,8 @@ RESPONSE_SCHEMA: dict[str, Any] = {
     },
     "required": ["claims"],
 }
+
+_ROUTABLE = frozenset({"fact", "legal", "figurative", "sarcasm"})
 
 _DEFAULT_REASONS = {
     "vague": "Lacks specific details (who, how much, when or which document) needed to check it.",
@@ -137,6 +155,8 @@ class _RawClaim(BaseModel):
     checkworthiness: float = 0.5
     reason: str = ""
     literal_claim: str | None = None
+    check_type: str = "OTHER"
+    entities: ClaimEntities | None = None
 
     @field_validator("segment", mode="before")
     @classmethod
@@ -162,6 +182,24 @@ class _RawClaim(BaseModel):
     def _known_type(cls, v: Any) -> str:
         v = str(v or "").strip().lower()
         return v if v in CLAIM_TYPES else "vague"
+
+    @field_validator("check_type", mode="before")
+    @classmethod
+    def _known_check_type(cls, v: Any) -> str:
+        v = str(v or "").strip().upper()
+        return v if v in CHECK_TYPES else "OTHER"
+
+    @field_validator("entities", mode="before")
+    @classmethod
+    def _lenient_entities(cls, v: Any) -> Any:
+        # Bad entities must not drop the claim itself.
+        if not isinstance(v, dict):
+            return None
+        try:
+            entities = ClaimEntities.model_validate(v)
+        except ValidationError:
+            return None
+        return entities if entities.model_dump(exclude_none=True) else None
 
     @field_validator("checkworthiness", mode="before")
     @classmethod
@@ -270,6 +308,9 @@ def parse_claims(raw: str, batch: list[TranscriptSegment]) -> list[Claim]:
                 checkworthiness=parsed.checkworthiness,
                 reason=parsed.reason or _DEFAULT_REASONS.get(parsed.type, f"Labelled as {parsed.type}."),
                 literal_claim=parsed.literal_claim if parsed.type in ("figurative", "sarcasm") else None,
+                # Only statements that assert something checkable get routed to a source.
+                check_type=parsed.check_type if parsed.type in _ROUTABLE else "OTHER",
+                entities=parsed.entities if parsed.type in _ROUTABLE else None,
             )
         )
     return claims

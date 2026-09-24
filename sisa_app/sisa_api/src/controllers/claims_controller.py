@@ -7,6 +7,8 @@ from pydantic import ValidationError
 from ..clients.gemini_client import GeminiClient, GeminiConfigError
 from ..config import is_origin_allowed, settings
 from ..models.claims import SegmentMessage
+from ..models.verification import VerificationResponse, VerifyClaimRequest
+from ..services import claim_verification_service
 from ..services.claims.classifier import ClaimClassifier, LLMClient
 from ..services.claims.detector import ClaimDetector
 from ..services.claims.rate_limiter import RateLimiter
@@ -101,3 +103,8 @@ async def run_session(websocket: WebSocket, llm_factory: LLMFactory) -> None:
         await websocket.send_json({"type": "error", "message": "Messages must be JSON.", "fatal": True})
         detector.abort()
         await websocket.close(code=1003)
+
+
+async def verify_claim(req: VerifyClaimRequest) -> VerificationResponse:
+    """Source errors come back as status ERROR in the body, so the UI can show them next to the claim."""
+    return await claim_verification_service.verify(req)

@@ -227,3 +227,58 @@ def test_schema_and_prompt_ask_for_quote():
 
     assert "quote" in RESPONSE_SCHEMA["properties"]["claims"]["items"]["required"]
     assert '"quote"' in SYSTEM_PROMPT
+
+
+def test_check_type_and_entities_are_parsed():
+    raw = json.dumps(
+        {
+            "claims": [
+                item(
+                    1,
+                    "Unemployment was 5% in July 2026",
+                    "fact",
+                    check_type="statistical",
+                    entities={"metric": "unemployment rate", "value": "5%", "unit": "percent", "date": "July 2026", "document_type": ""},
+                ),
+                item(
+                    2,
+                    "EO 124 was issued",
+                    "legal",
+                    check_type="LEGAL",
+                    entities={"document_type": "Executive Order", "document_number": 124},
+                ),
+            ]
+        }
+    )
+    stat, law = parse_claims(raw, BATCH)
+    assert stat.check_type == "STATISTICAL"
+    assert stat.entities.model_dump(exclude_none=True) == {
+        "metric": "unemployment rate", "value": 5.0, "unit": "percent", "date": "July 2026"
+    }
+    assert law.check_type == "LEGAL"
+    assert (law.entities.document_type, law.entities.document_number) == ("Executive Order", "124")
+
+
+def test_check_type_defaults_and_is_not_routed_for_opinions():
+    raw = json.dumps(
+        {
+            "claims": [
+                item(1, "a", "fact"),  # missing check_type/entities
+                item(1, "b", "fact", check_type="ASTROLOGY", entities="not a dict"),
+                item(1, "c", "opinion", check_type="LEGAL", entities={"document_type": "Executive Order"}),
+                item(1, "d", "fact", check_type="LEGAL", entities={"metric": "", "unit": "  "}),
+            ]
+        }
+    )
+    claims = parse_claims(raw, BATCH)
+    assert [c.check_type for c in claims] == ["OTHER", "OTHER", "OTHER", "LEGAL"]
+    assert [c.entities for c in claims] == [None, None, None, None]  # all-empty entities -> None
+
+
+def test_schema_and_prompt_ask_for_check_type():
+    from src.services.claims.classifier import RESPONSE_SCHEMA
+
+    props = RESPONSE_SCHEMA["properties"]["claims"]["items"]["properties"]
+    assert props["check_type"]["enum"] == ["STATISTICAL", "LEGAL", "OTHER"]
+    assert {"metric", "value", "document_type", "document_number"} <= set(props["entities"]["properties"])
+    assert '"check_type"' in SYSTEM_PROMPT and '"entities"' in SYSTEM_PROMPT
