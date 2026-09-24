@@ -31,6 +31,10 @@ class RetryableLLMError(RuntimeError):
         self.exponential = exponential
 
 
+class LLMConfigError(RuntimeError):
+    """A provider is missing a key or is misconfigured (bad key, unknown model). Not retried."""
+
+
 class ClassifierError(RuntimeError):
     def __init__(self, message: str, retry_after: float | None = None, exponential: bool = False):
         super().__init__(message)
@@ -97,7 +101,8 @@ none; for other types, "".
 
 Return ONLY JSON of this shape:
 {"claims": [{"segment": <number of the segment>, "quote": "...", "text": "...", "type": "fact|legal|opinion|\
-promise|sarcasm|figurative|vague", "checkworthiness": 0.0, "reason": "...", "literal_claim": "", "check_type": "STATISTICAL|LEGAL|OTHER", "entities": {"metric": "", "value": 0, "unit": "", "date": "", "geography": "", "document_type": "", "document_number": "", "subject": ""}}]}
+promise|sarcasm|figurative|vague", "checkworthiness": 0.0, "reason": "...", "literal_claim": "", "check_type": "STATISTICAL|LEGAL|OTHER", "entities": {...only the fields that apply...}}]}
+Example entities: STATISTICAL {"metric": "unemployment rate", "value": 5, "unit": "percent", "date": "July 2026", "geography": "Philippines"}; LEGAL {"document_type": "Executive Order", "document_number": "124"}; OTHER {}.
 If there are no claims, return {"claims": []}.
 """
 
@@ -139,6 +144,20 @@ RESPONSE_SCHEMA: dict[str, Any] = {
 }
 
 _ROUTABLE = frozenset({"fact", "legal", "figurative", "sarcasm"})
+_ENTITY_FIELDS = {
+    "STATISTICAL": {"metric", "value", "unit", "date", "geography"},
+    "LEGAL": {"document_type", "document_number", "subject", "date"},
+    "OTHER": set(),
+}
+
+
+def _entities_for(check_type: str, entities: ClaimEntities | None) -> ClaimEntities | None:
+    """Keep only the fields that belong to the claim's check_type (models sometimes fill
+    every field, e.g. value=0 on a legal claim)."""
+    if entities is None:
+        return None
+    kept = entities.model_dump(include=_ENTITY_FIELDS[check_type], exclude_none=True)
+    return ClaimEntities(**kept) if kept else None
 
 _DEFAULT_REASONS = {
     "vague": "Lacks specific details (who, how much, when or which document) needed to check it.",
@@ -310,7 +329,7 @@ def parse_claims(raw: str, batch: list[TranscriptSegment]) -> list[Claim]:
                 literal_claim=parsed.literal_claim if parsed.type in ("figurative", "sarcasm") else None,
                 # Only statements that assert something checkable get routed to a source.
                 check_type=parsed.check_type if parsed.type in _ROUTABLE else "OTHER",
-                entities=parsed.entities if parsed.type in _ROUTABLE else None,
+                entities=_entities_for(parsed.check_type, parsed.entities) if parsed.type in _ROUTABLE else None,
             )
         )
     return claims

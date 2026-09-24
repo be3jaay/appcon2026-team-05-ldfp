@@ -4,12 +4,12 @@ from collections.abc import Callable
 from fastapi import WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 
-from ..clients.gemini_client import GeminiClient, GeminiConfigError
+from ..clients.llm_chain import build_llm_client
 from ..config import is_origin_allowed, settings
 from ..models.claims import SegmentMessage
 from ..models.verification import VerificationResponse, VerifyClaimRequest
 from ..services import claim_verification_service
-from ..services.claims.classifier import ClaimClassifier, LLMClient
+from ..services.claims.classifier import ClaimClassifier, LLMClient, LLMConfigError
 from ..services.claims.detector import ClaimDetector
 from ..services.claims.rate_limiter import RateLimiter
 
@@ -18,13 +18,9 @@ logger = logging.getLogger(__name__)
 LLMFactory = Callable[[], LLMClient]
 
 
-def gemini_factory() -> LLMClient:
-    return GeminiClient(
-        api_key=settings.gemini_api_key,
-        model=settings.gemini_model,
-        timeout_seconds=settings.gemini_timeout_seconds,
-        thinking_level=settings.gemini_thinking_level,
-    )
+def llm_factory() -> LLMClient:
+    """The configured provider chain (e.g. Groq, falling back to Gemini)."""
+    return build_llm_client()
 
 
 _rate_limiter: RateLimiter | None = None
@@ -34,13 +30,13 @@ def shared_rate_limiter() -> RateLimiter:
     """One limiter for the whole process: every session shares the same API quota."""
     global _rate_limiter
     if _rate_limiter is None:
-        _rate_limiter = RateLimiter(settings.gemini_rpm)
+        _rate_limiter = RateLimiter(settings.llm_rpm)
     return _rate_limiter
 
 
 def get_llm_factory() -> LLMFactory:
     """FastAPI dependency; tests override it with a fake LLM."""
-    return gemini_factory
+    return llm_factory
 
 
 async def run_session(websocket: WebSocket, llm_factory: LLMFactory) -> None:
@@ -52,7 +48,7 @@ async def run_session(websocket: WebSocket, llm_factory: LLMFactory) -> None:
 
     try:
         llm = llm_factory()
-    except GeminiConfigError as exc:
+    except LLMConfigError as exc:
         await websocket.send_json({"type": "error", "message": str(exc), "fatal": True})
         await websocket.close(code=1011)
         return

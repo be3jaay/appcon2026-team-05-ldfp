@@ -81,16 +81,16 @@ def test_ws_rejects_foreign_origin(client):
     assert exc.value.code == 1008
 
 
-def test_ws_missing_gemini_key_is_a_clear_fatal_error(monkeypatch):
+def test_ws_missing_llm_key_is_a_clear_fatal_error(monkeypatch):
     monkeypatch.setattr(settings, "cors_allow_origins", ["http://localhost:3000"])
-    monkeypatch.setattr(settings, "gemini_api_key", None)
-    app.dependency_overrides[get_llm_factory] = lambda: claims_controller.gemini_factory
+    monkeypatch.setattr(settings, "llm_providers", [])
+    app.dependency_overrides[get_llm_factory] = lambda: claims_controller.llm_factory
     try:
         with TestClient(app).websocket_connect("/api/v1/claims/ws", headers=ALLOWED) as ws:
             m = ws.receive_json()
     finally:
         app.dependency_overrides.clear()
-    assert m["type"] == "error" and m["fatal"] and "GEMINI_API_KEY" in m["message"]
+    assert m["type"] == "error" and m["fatal"] and "GROQ_API_KEY" in m["message"]
 
 
 def test_temporary_key_rejects_foreign_origin(client, monkeypatch):

@@ -50,8 +50,39 @@ class Settings:
     gemini_timeout_seconds: float = float(os.environ.get("GEMINI_TIMEOUT_SECONDS", "30"))
     # minimal | low | medium | high. Lower = faster; empty string = model default.
     gemini_thinking_level: str | None = os.environ.get("GEMINI_THINKING_LEVEL", "low") or None
-    # Pace all claim LLM calls (every session) to this many per minute. Free tier: 5. 0 = no limit.
-    gemini_rpm: float = float(os.environ.get("GEMINI_RPM", "5"))
+
+    # OpenAI-compatible providers (free tiers). Model defaults may go stale:
+    # if a model is retired the error lists the provider's current models.
+    groq_api_key: str | None = os.environ.get("GROQ_API_KEY") or None
+    groq_model: str = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
+    cerebras_api_key: str | None = os.environ.get("CEREBRAS_API_KEY") or None
+    cerebras_model: str = os.environ.get("CEREBRAS_MODEL", "llama-3.3-70b")
+    openrouter_api_key: str | None = os.environ.get("OPENROUTER_API_KEY") or None
+    openrouter_model: str = os.environ.get("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct:free")
+    llm_timeout_seconds: float = float(os.environ.get("LLM_TIMEOUT_SECONDS", "30"))
+    # For reasoning models (gpt-oss, qwen3...): low | medium | high; empty = don't send.
+    llm_reasoning_effort: str | None = os.environ.get("LLM_REASONING_EFFORT", "low") or None
+
+    # Order to try providers in; the next one is used when one is busy or rate-limited.
+    # Empty = every provider that has a key, in this order: groq, cerebras, openrouter, gemini.
+    llm_providers: list[str] = [p.lower() for p in _csv(os.environ.get("LLM_PROVIDERS", ""))] or [
+        name
+        for name, key in (
+            ("groq", groq_api_key),
+            ("cerebras", cerebras_api_key),
+            ("openrouter", openrouter_api_key),
+            ("gemini", gemini_api_key),
+        )
+        if key
+    ]
+    # Pace all claim LLM calls (every session) to this many per minute; 0 = no limit.
+    # Free tiers (Sept 2026): Gemini 5 req/min; Groq 8k tokens/min (~3-4 calls). When the
+    # first provider is rate-limited the chain falls back to the next, so 6 uses both.
+    llm_rpm: float = float(
+        os.environ.get("LLM_RPM")
+        or os.environ.get("GEMINI_RPM")
+        or ("5" if not llm_providers or llm_providers[0] == "gemini" else "6")
+    )
     claims_llm_max_attempts: int = int(os.environ.get("CLAIMS_LLM_MAX_ATTEMPTS", "4"))
     # Batches that queue up while waiting for a call slot are merged, up to this many segments.
     claims_max_segments_per_call: int = int(os.environ.get("CLAIMS_MAX_SEGMENTS_PER_CALL", "8"))

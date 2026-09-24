@@ -14,12 +14,19 @@ uv run pytest -q                 # no API keys or network needed
 |---|---|---|
 | `SONIOX_API_KEY` | none | Mints temporary Soniox keys for the browser |
 | `CORS_ALLOW_ORIGINS` | `http://localhost:3000` | Comma-separated browser origins allowed to call the API and open websockets |
-| `GEMINI_API_KEY` | none | Claim classifier. Without it, the claims websocket sends a fatal error and closes |
+| `GROQ_API_KEY` | none | Groq (free tier). With this set, the chain is Groq → Gemini |
+| `GROQ_MODEL` | `openai/gpt-oss-120b` | Groq model id. If it's retired, the error lists Groq's current models |
+| `CEREBRAS_API_KEY` / `CEREBRAS_MODEL` | none / `llama-3.3-70b` | Optional extra provider (OpenAI-compatible) |
+| `OPENROUTER_API_KEY` / `OPENROUTER_MODEL` | none / `meta-llama/llama-3.3-70b-instruct:free` | Optional extra provider (OpenAI-compatible) |
+| `GEMINI_API_KEY` | none | Gemini (AI Studio key, starts with `AIza`) |
 | `GEMINI_MODEL` | `gemini-3.6-flash` | Gemini model id |
 | `GEMINI_THINKING_LEVEL` | `low` | `minimal`/`low`/`medium`/`high`; empty = model default |
-| `GEMINI_TIMEOUT_SECONDS` | `30` | Per-request timeout |
-| `GEMINI_RPM` | `5` | Max claim LLM calls per minute, shared by all sessions (free tier: 5; `0` = no limit) |
-| `CLAIMS_LLM_MAX_ATTEMPTS` | `4` | Attempts per call on 429/5xx. Uses Gemini's `retryDelay`, or 5 s/10 s/20 s backoff on overload |
+| `GEMINI_TIMEOUT_SECONDS` | `30` | Per-request timeout for Gemini |
+| `LLM_PROVIDERS` | every provider with a key: groq, cerebras, openrouter, gemini | Order to try providers in, e.g. `groq,gemini` |
+| `LLM_RPM` | `6` (`5` if Gemini is first) | Max claim LLM calls per minute, shared by all sessions; `0` = no limit. `GEMINI_RPM` is still read as a fallback |
+| `LLM_TIMEOUT_SECONDS` | `30` | Per-request timeout for OpenAI-compatible providers |
+| `LLM_REASONING_EFFORT` | `low` | Sent to reasoning models only (gpt-oss, qwen3…); empty = don't send |
+| `CLAIMS_LLM_MAX_ATTEMPTS` | `4` | Attempts per batch when every provider is busy. Uses the provider's retry delay, or 5 s/10 s/20 s backoff |
 | `CLAIMS_MAX_SEGMENTS_PER_CALL` | `8` | Batches that queue while waiting for a call slot are merged into one call, up to this size |
 | `LOG_LEVEL` | `INFO` | Backend log level (`DEBUG` for more) |
 | `OFFICIAL_GAZETTE_BASE_URL` | `https://www.officialgazette.gov.ph` | Official Gazette site |
@@ -50,9 +57,10 @@ useSonioxTranscription ───┴─► WS /api/v1/claims/ws ─► ClaimDetec
                                                          flush on speaker change | 3 segments
                                                          | 15 s timer | stop
                                                       3. worker: waits for a shared rate-limit slot
-                                                         (GEMINI_RPM), merges queued batches
+                                                         (LLM_RPM), merges queued batches
                                               ◄────── {"type":"checking", segment_ids}
-                                                      4. ClaimClassifier: ONE Gemini call
+                                                      4. ClaimClassifier: ONE LLM call
+                                                         (Groq → Gemini fallback chain)
                                                          + previous 2 lines as CONTEXT only
                                                          retries 429/503 with the provider's delay
                                               ◄────── {"type":"claims", claims:[...]}
@@ -60,7 +68,7 @@ useSonioxTranscription ───┴─► WS /api/v1/claims/ws ─► ClaimDetec
 
 Mic and video both go through the same hook (`sisa_fe/hooks/use-soniox-transcription.ts`), so they share one code path. In the transcript, `components/claims/claim-text.tsx` highlights each claim's `quote` in its type colour (hover to see the type, check-worthiness, reason and literal claim). A spinner shows while a line is queued (grey) or being checked (blue), and a red icon if detection failed. A claim whose quote can't be found in the text is shown as a type chip after the line.
 
-**Why merging matters:** a speaker change closes a batch, so in a back-and-forth hearing every turn is its own batch. Without merging and the shared rate limiter, that meant one LLM call per turn plus SDK retries, which quickly went over the free-tier limit of 5/min. Now calls are paced to `GEMINI_RPM`, and everything that queues up meanwhile goes out in the next call.
+**Why merging matters:** a speaker change closes a batch, so in a back-and-forth hearing every turn is its own batch. Without merging and the shared rate limiter, that meant one LLM call per turn plus SDK retries, which quickly went over the free-tier limit of 5/min. Now calls are paced to `LLM_RPM`, and everything that queues up meanwhile goes out in the next call.
 
 ### Logs
 
@@ -85,7 +93,9 @@ stop: 6 segments, 2 skipped, 5 LLM calls (1 batches failed), 2 claims {'opinion'
 | `src/services/claims/batcher.py` | Buffers kept segments and flushes on the first trigger; order is preserved and nothing is lost or duplicated |
 | `src/services/claims/classifier.py` | `SYSTEM_PROMPT` (constant, so it is identical on every call), prompt building, and tolerant Pydantic parsing: bad items are dropped, unknown types become `vague`, items map back to segment_id/timestamp/speaker |
 | `src/services/claims/detector.py` | `ClaimDetector`, the single entry point: `add_segment`, `stop`, `process`, `abort` |
-| `src/services/claims/rate_limiter.py` | Process-wide pacing of LLM calls (`GEMINI_RPM`) |
+| `src/services/claims/rate_limiter.py` | Process-wide pacing of LLM calls (`LLM_RPM`) |
+| `src/clients/llm_chain.py` | Provider fallback chain (`FallbackLLMClient`) and `build_llm_client()` from settings |
+| `src/clients/openai_compat_client.py` | Groq / Cerebras / OpenRouter (OpenAI chat format, JSON mode, httpx); maps 429/5xx/timeouts to retryable errors |
 | `src/clients/gemini_client.py` | Gemini implementation of the injectable `LLMClient` protocol; maps 429/5xx to retryable errors |
 | `src/controllers/claims_controller.py` | Websocket session loop and Origin check |
 
@@ -150,29 +160,32 @@ Statistical claims return `source_type: "OFFICIAL_STATISTICS"` evidence with `va
 - `test_classifier.py`: parsing, malformed output, context lines, splitting mixed sentences, one call per batch, identical system prompt
 - `test_detector.py`: a scripted Taglish session end to end with far fewer LLM calls than segments; merging alternating-speaker batches; retries and backoff; per-step logs
 - `test_rate_limiter.py`, `test_gemini_client.py`: pacing, and mapping Gemini 429/503 to retries (offline)
+- `test_llm_providers.py`: OpenAI-compatible client (request shape, 429/503/timeout/bad key/retired model) and the fallback chain (fallback, cooldowns, all-busy)
 - `test_official_gazette.py`: feed parsing on **real captured responses** (`tests/fixtures/official_gazette/`), Cloudflare challenge/WAF detection, URL validation, HTTP errors, relevance, caching, document fallback, routes
 - `test_claim_verification.py`: STATISTICAL→OpenSTAT and LEGAL→Official Gazette routing and the conservative assessments
-- `test_claims_ws.py`: websocket route, rejection of foreign origins, missing Gemini key
+- `test_claims_ws.py`: websocket route, rejection of foreign origins, no LLM key configured
 - `test_eval_dataset.py`: eval file shape, and the prefilter never drops a labelled claim
 
-### Evaluation (real Gemini, not in CI)
+### Evaluation (real LLM, not in CI)
 
 ```bash
 uv run python scripts/eval_claim_detection.py                  # realistic streaming batches
 uv run python scripts/eval_claim_detection.py --mode isolated  # one detector per case
+uv run python scripts/eval_claim_detection.py --providers groq  # one provider only, to compare
 uv run python scripts/eval_claim_detection.py --rpm 60         # paid tier: faster
 ```
-Reads `data/eval/claim_detection.json`, which you can edit: `expected` lists one item per claim, `also_ok` gives acceptable alternate types, and `needs_context` + `context` cover sarcasm. The script prints accuracy per type, a confusion matrix, every miss with its text, the prefilter drop rate, and LLM calls per 100 segments. If `GEMINI_API_KEY` is unset it exits with a message and makes no calls.
+Reads `data/eval/claim_detection.json`, which you can edit: `expected` lists one item per claim, `also_ok` gives acceptable alternate types, and `needs_context` + `context` cover sarcasm. The script prints accuracy per type, a confusion matrix, every miss with its text, the prefilter drop rate, and LLM calls per 100 segments. If no LLM key is set it exits with a message and makes no calls.
 
 ### Known gaps
 
-- **Free-tier quota**: 5 requests/min is shared by *all* sessions on one key. The limiter keeps under it by merging batches, but that adds up to ~12 s of wait per call when busy. Use a paid key and raise `GEMINI_RPM` for real sessions.
-- **Gemini 503 "high demand"** is on Google's side. Calls retry with backoff (5/10/20 s); if all attempts fail, those lines show the red error icon and are not re-sent.
-- **Latency:** a lone segment waits up to `CLAIMS_BATCH_MAX_WAIT_S` (15 s) for its batch to fill, then for a rate-limit slot, then ~2–5 s for Gemini.
+- **Free-tier quotas** are shared by *all* sessions: Groq allows 8k tokens/min (~3–4 calls, each about 2k tokens) and 1,000 requests/day; Gemini allows 5 requests/min. When Groq hits its limit, the chain sends the batch to Gemini and skips Groq for the wait time Groq gave. The limiter (`LLM_RPM`, default 6) plus batch merging keeps the total within both.
+- **Provider overload** (Gemini 503 "high demand") falls straight through to the next provider. Only when every provider is busy does the batch wait (5/10/20 s backoff). If all attempts fail, those lines show the red error icon.
+- **Latency:** a lone segment waits up to `CLAIMS_BATCH_MAX_WAIT_S` (15 s) for its batch to fill, then for a rate-limit slot, then ~2–3 s for Groq (gpt-oss-120b, low reasoning).
+- **Model ids change:** Groq retired Llama 3.3 70B; if a configured model disappears, the error message lists the provider's current models. Set `GROQ_MODEL` accordingly.
 - **Origin checks** stop other *websites*, not scripts: a non-browser client can fake `Origin`. Real protection needs auth or rate limiting.
 - **Diarization errors** from Soniox pass straight through: a wrong speaker label means a wrong `speaker` on the claim and an extra speaker-change flush.
 - Segments are Soniox utterances (`<end>`), not grammatical sentences, so a long utterance can hold several claims (the classifier splits them) and one sentence can be split across two segments.
-- Prompt caching: the system prompt is identical on every call, but live runs log `cached=None`, so Gemini isn't caching the ~1,065-token prompt. The token counts are logged per call.
+- Prompt caching: the system prompt is identical on every call, but live runs log `cached=None`, so Gemini isn't caching the ~1,065-token prompt. The token counts (and cached tokens, when a provider reports them) are logged per call.
 - No persistence: claims live only in the websocket session and the frontend hook state. The frontend still shows mock evidence; wiring it to `/api/v1/claims/verify` is the next step.
 - Official Gazette: only the feed is reachable, so evidence text is the site's **opening excerpt**, not the full document. Search results are the site's own (WordPress) ranking, 10 per page. "1987 Constitution" finds documents that cite it, not the Constitution page itself.
 - OpenSTAT verification covers the unemployment rate only.

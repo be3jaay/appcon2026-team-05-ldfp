@@ -1,4 +1,4 @@
-"""Evaluate claim detection against the REAL Gemini classifier (not part of CI).
+"""Evaluate claim detection against the REAL LLM provider chain (not part of CI).
 
     cd sisa_api
     uv run python scripts/eval_claim_detection.py                 # stream mode (realistic batching)
@@ -27,6 +27,7 @@ from src.services.claims.classifier import ClaimClassifier, LLMClient  # noqa: E
 from src.services.claims.detector import ClaimDetector  # noqa: E402
 from src.services.claims.rate_limiter import RateLimiter  # noqa: E402
 
+LLM_NAME = "?"
 DEFAULT_FILE = ROOT / "data" / "eval" / "claim_detection.json"
 NONE = "none"
 
@@ -55,9 +56,9 @@ def _segment(segment_id: str, text: str, speaker: str, clock: list[int]) -> Tran
 
 
 def make_llm() -> LLMClient:
-    from src.controllers.claims_controller import gemini_factory
+    from src.clients.llm_chain import build_llm_client
 
-    return gemini_factory()
+    return build_llm_client()
 
 
 def make_detector(llm: LLMClient, limiter: RateLimiter) -> ClaimDetector:
@@ -144,7 +145,7 @@ def print_report(cases, claims, skipped, calls, segments, errors, mode):
     hits, totals, confusion, misses, literal = score(cases, claims)
     labels = [*CLAIM_TYPES, NONE]
 
-    print(f"\n=== Claim detection eval  model={settings.gemini_model}  mode={mode}  cases={len(cases)} ===\n")
+    print(f"\n=== Claim detection eval  llm={LLM_NAME}  mode={mode}  cases={len(cases)} ===\n")
     print("Accuracy per expected type")
     for t in labels:
         if totals[t]:
@@ -189,16 +190,23 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--file", type=Path, default=DEFAULT_FILE)
     parser.add_argument("--mode", choices=["stream", "isolated"], default="stream")
-    parser.add_argument("--rpm", type=float, default=5, help="max LLM requests per minute (Gemini free tier: 5)")
+    parser.add_argument("--rpm", type=float, default=settings.llm_rpm, help="max LLM requests per minute")
+    parser.add_argument(
+        "--providers", help="provider chain to evaluate, e.g. 'groq' or 'gemini' (default: LLM_PROVIDERS)"
+    )
     args = parser.parse_args()
 
-    if not settings.gemini_api_key:
-        print("GEMINI_API_KEY is not set: skipping the claim detection eval (it calls the real Gemini API).")
-        print("Add it to sisa_api/.env or the environment and run again.")
+    if args.providers:
+        settings.llm_providers = [p.strip().lower() for p in args.providers.split(",") if p.strip()]
+    if not settings.llm_providers:
+        print("No LLM API key is set: skipping the claim detection eval (it calls a real LLM).")
+        print("Add GROQ_API_KEY (or GEMINI_API_KEY, ...) to sisa_api/.env and run again.")
         return 0
+    global LLM_NAME
+    LLM_NAME = " > ".join(settings.llm_providers)
 
     cases = load_cases(args.file)
-    print(f"Running {len(cases)} cases against {settings.gemini_model} at <= {args.rpm:g} requests/min...")
+    print(f"Running {len(cases)} cases against {LLM_NAME} at <= {args.rpm:g} requests/min...")
     print_report(cases, *asyncio.run(run(cases, args.mode, args.rpm)), args.mode)
     return 0
 

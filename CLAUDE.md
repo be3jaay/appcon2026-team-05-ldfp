@@ -12,7 +12,7 @@ cd sisa_app/sisa_api
 uv sync
 uv run fastapi dev src/main.py
 uv run pytest -q                                  # must pass with no API keys and no network
-uv run python scripts/eval_claim_detection.py     # real Gemini; skips when GEMINI_API_KEY is unset
+uv run python scripts/eval_claim_detection.py     # real LLM chain; skips when no LLM key is set
 
 cd sisa_app/sisa_fe
 pnpm dev
@@ -21,11 +21,12 @@ pnpm typecheck
 
 ## Claim detection (`sisa_api/src/services/claims/`)
 
-Browser Soniox hook → finished segment → `WS /api/v1/claims/ws` → `ClaimDetector`: `prefilter` (no LLM) → `SegmentBatcher` (flush on speaker change / 3 segments / 15 s timer / stop) → worker (shared `RateLimiter` at `GEMINI_RPM`, merges queued batches, retries 429/503) → `ClaimClassifier` (ONE Gemini call, previous 2 lines sent as CONTEXT only, returns a verbatim `quote` per claim). The frontend highlights quotes via `sisa_fe/components/claims/claim-text.tsx`. Mic and video share this path. See `sisa_api/README.md` for the protocol, config and known gaps.
+Browser Soniox hook → finished segment → `WS /api/v1/claims/ws` → `ClaimDetector`: `prefilter` (no LLM) → `SegmentBatcher` (flush on speaker change / 3 segments / 15 s timer / stop) → worker (shared `RateLimiter` at `LLM_RPM`, merges queued batches, retries 429/503) → `ClaimClassifier` (ONE LLM call through the provider chain `clients/llm_chain.py`: Groq → Gemini by default, previous 2 lines sent as CONTEXT only, returns a verbatim `quote` per claim). The frontend highlights quotes via `sisa_fe/components/claims/claim-text.tsx`. Mic and video share this path. See `sisa_api/README.md` for the protocol, config and known gaps.
 
 Rules to keep:
 - Never one LLM call per segment or per speaker turn. Tests count calls on a fake client.
-- Don't add SDK-level retries: they burn shared quota. Retries go through the detector and limiter.
+- Don't add SDK-level retries: they burn shared quota. Retries go through the detector and limiter; a busy provider falls through to the next one in the chain.
+- New providers: if they speak the OpenAI chat format, add a preset to `openai_compat_client.PROVIDERS` and `llm_chain.build_provider`.
 - `SYSTEM_PROMPT` stays a constant, identical on every call (prompt caching), and has nothing specific to one video, speaker or politician.
 - The LLM client is injected (`LLMClient` protocol). Tests use fakes from `tests/conftest.py` and never hit the network.
 - Prefilter: when unsure, keep. Word lists go in `WORD_LISTS` only.

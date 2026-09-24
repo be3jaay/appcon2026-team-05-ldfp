@@ -5,7 +5,7 @@ from typing import Any
 from google import genai
 from google.genai import errors, types
 
-from ..services.claims.classifier import RetryableLLMError
+from ..services.claims.classifier import LLMConfigError, RetryableLLMError
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +14,7 @@ _DEFAULT_BACKOFF_S = {429: 30.0}  # used when the response carries no retryDelay
 _OVERLOAD_BACKOFF_S = 5.0
 
 
-class GeminiConfigError(RuntimeError):
+class GeminiConfigError(LLMConfigError):
     pass
 
 
@@ -50,6 +50,7 @@ class GeminiClient:
                 "Server is missing GEMINI_API_KEY. Add it to .env (get one from aistudio.google.com)."
             )
         self.model = model
+        self.name = f"gemini:{model}"
         self.thinking_level = thinking_level.upper() if thinking_level else None
         self._client = genai.Client(
             api_key=api_key,
@@ -74,6 +75,8 @@ class GeminiClient:
                 model=self.model, contents=user, config=config
             )
         except errors.APIError as exc:
+            if exc.code in (401, 403):
+                raise LLMConfigError(f"gemini: API key rejected ({exc.code} {exc.status}).") from exc
             if exc.code in _RETRYABLE_CODES:
                 delay = retry_after_seconds(exc)
                 if delay is not None:
