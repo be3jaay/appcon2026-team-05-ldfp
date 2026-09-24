@@ -4,7 +4,8 @@ STATISTICAL -> DPWH flood control project records (flood control claims), else
                PSA OpenSTAT (existing openstat_service, unchanged)
 LEGAL       -> Official Gazette search
 OTHER       -> no data source; like any claim our data cannot settle, it falls back to
-               published fact-checks (Google Fact Check Tools) when FACTCHECK_API_KEY is set
+               published fact-checks (Google Fact Check Tools) when FACTCHECK_API_KEY is set,
+               then, last, to AI web search (OpenAI search model) when OPENAI_API_KEY is set
 
 Assessments are conservative: a document that is not found in a search is
 never reported as CONTRADICTED, and a found document only SUPPORTS claims
@@ -13,8 +14,10 @@ about its existence/issuance, not claims about its content.
 
 import logging
 import re
+from urllib.parse import urlsplit
 
 from ..clients.official_gazette_client import OfficialGazetteClientError
+from ..config import settings
 from ..clients.openstat_client import OpenStatClientError
 from ..models.claims import ClaimEntities
 from ..models.official_gazette import OFFICIAL_GAZETTE_NAME, OFFICIAL_GAZETTE_PUBLISHER, OfficialGazetteResult
@@ -31,7 +34,14 @@ from ..models.verification import (
 from ..models.flood_control import FLOOD_CONTROL_PAGE_URL, FLOOD_CONTROL_PUBLISHER, FLOOD_CONTROL_SOURCE_NAME
 from ..clients.factcheck_client import FactCheckClientError
 from ..models.factcheck import PublishedFactCheck
-from . import evidence_judge, factcheck_service, flood_control_service, official_gazette_service, openstat_service
+from . import (
+    evidence_judge,
+    factcheck_service,
+    flood_control_service,
+    official_gazette_service,
+    openstat_service,
+    web_search_service,
+)
 from .claims.classifier import LLMClient
 from .claims.rate_limiter import RateLimiter
 from .openstat_parser import OpenStatParseError
@@ -75,7 +85,60 @@ async def verify(
         )
     if result.assessment.status in ("NO_SOURCE", "INSUFFICIENT_EVIDENCE"):
         result = await _with_published_fact_checks(req.search_text or req.claim, result, llm, rate_limiter)
+    if result.assessment.status in ("NO_SOURCE", "INSUFFICIENT_EVIDENCE") and _web_search_allowed(req):
+        result = await _with_web_search(req, result)
     return result
+
+
+# --- AI web search (last resort) ----------------------------------------------------
+
+_RELIABILITY_LABEL = {
+    "government": "government source",
+    "fact_checker": "fact-checker",
+    "news": "news report",
+    "reference": "reference site",
+    "other": "other website",
+}
+
+
+def _web_search_allowed(req: VerifyClaimRequest) -> bool:
+    if not web_search_service.is_configured():
+        return False
+    # Paid call: skip low-value claims (callers that don't send a score are allowed).
+    return req.checkworthiness is None or req.checkworthiness >= settings.web_search_min_checkworthiness
+
+
+async def _with_web_search(req: VerifyClaimRequest, result: VerificationResponse) -> VerificationResponse:
+    web = await web_search_service.check(req.search_text or req.claim, req.context)
+    if web is None:
+        return result
+    explanation = web.reasoning or "The web search did not explain its verdict."
+    if web.downgraded:
+        explanation += " Only weak or unconfirmed sources were found, so this is not treated as settled."
+    strong = sum(s.reliability in ("government", "fact_checker", "news") for s in web.sources)
+    explanation += f" (AI web search: {len(web.sources)} source{'s' if len(web.sources) != 1 else ''}, {strong} reliable.)"
+    evidence = [
+        EvidenceItem(
+            source=EvidenceSource(
+                name=urlsplit(s.url).hostname or "website",
+                publisher=_RELIABILITY_LABEL[s.reliability],
+                source_type="WEB_SEARCH_RESULT",
+                url=s.url,
+                title=s.title,
+                reliability=s.reliability,
+            ),
+            data=EvidenceData(relevant_text=s.quote),
+            relevance="DIRECT" if s.reliability in ("government", "fact_checker", "news") else "RELATED",
+        )
+        for s in web.sources
+    ]
+    # Keep related published fact-checks that were already attached.
+    kept = [e for e in result.evidence if e.source.source_type == "PUBLISHED_FACT_CHECK"]
+    return VerificationResponse(
+        claim=result.claim,
+        assessment=Assessment(status=web.status, explanation=explanation, method="AI_WEB_SEARCH"),
+        evidence=evidence + kept,
+    )
 
 
 # --- Published fact-checks (Google Fact Check Tools) ---------------------------------

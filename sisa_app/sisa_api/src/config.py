@@ -56,6 +56,17 @@ class Settings:
     factcheck_page_size: int = int(os.environ.get("FACTCHECK_PAGE_SIZE", "10"))
     factcheck_cache_seconds: float = float(os.environ.get("FACTCHECK_CACHE_SECONDS", "86400"))
 
+    # AI web search (last resort, after data sources and published fact-checks). Uses an
+    # OpenAI search-enabled model through the Chat Completions API (idea from feat/pdm-test).
+    openai_api_key: str | None = os.environ.get("OPENAI_API_KEY") or None
+    openai_base_url: str = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    web_search_model: str = os.environ.get("WEB_SEARCH_MODEL", "gpt-5-search-api")
+    web_search_timeout_seconds: float = float(os.environ.get("WEB_SEARCH_TIMEOUT_SECONDS", "60"))
+    # Paid calls: paced, cached, and only for claims worth checking.
+    web_search_rpm: float = float(os.environ.get("WEB_SEARCH_RPM", "10"))
+    web_search_cache_seconds: float = float(os.environ.get("WEB_SEARCH_CACHE_SECONDS", "86400"))
+    web_search_min_checkworthiness: float = float(os.environ.get("WEB_SEARCH_MIN_CHECKWORTHINESS", "0.6"))
+
     # Official Gazette (primary source for laws and executive issuances).
     # Search uses the site's own WordPress search delivered as RSS (/feed/?s=...);
     # HTML pages sit behind a Cloudflare challenge and usually cannot be fetched.

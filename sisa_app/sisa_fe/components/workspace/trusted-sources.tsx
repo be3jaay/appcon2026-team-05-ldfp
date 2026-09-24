@@ -65,11 +65,16 @@ export function TrustedSources({
   className?: string
 }) {
   const live = useSourcesStatus()
+  // Sources that depend on a server-side API key show their live status.
+  const keyed: Record<string, boolean | undefined> = {
+    factcheck: live?.factcheck,
+    "web-search": live?.web_search,
+  }
   const sources = TRUSTED_SOURCES.map((s) =>
-    s.id === "factcheck" && live
+    live && s.id in keyed
       ? {
           ...s,
-          status: (live.factcheck ? "connected" : "needs-key") as SourceStatus,
+          status: (keyed[s.id] ? "connected" : "needs-key") as SourceStatus,
         }
       : s
   )

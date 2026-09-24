@@ -6,6 +6,7 @@ import { apiBaseUrl } from "@/lib/api"
 
 export interface SourcesStatus {
   factcheck: boolean
+  web_search?: boolean
   llm: boolean
 }
 

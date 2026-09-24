@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils"
 import { formatTime } from "@/lib/video"
 import {
   METHOD_NOTE,
+  RELIABILITY_LABEL,
   STATEMENT_KIND,
   VERDICT_META,
   ratingVerdict,
@@ -63,6 +64,19 @@ function EvidenceCard({ item }: { item: EvidenceItem }) {
           <p className="m-0 text-[11px] text-ink-faint">
             {source.name}
             {source.date ? ` · ${source.date}` : ""}
+            {source.reliability ? (
+              <span
+                className={
+                  source.reliability === "government" ||
+                  source.reliability === "fact_checker" ||
+                  source.reliability === "news"
+                    ? "ml-1.5 rounded-full bg-brand-accent/10 px-1.5 text-[10px] font-semibold text-brand-accent"
+                    : "ml-1.5 rounded-full bg-canvas px-1.5 text-[10px] font-semibold text-ink-faint"
+                }
+              >
+                {RELIABILITY_LABEL[source.reliability] ?? source.reliability}
+              </span>
+            ) : null}
           </p>
         </div>
         <span className="flex shrink-0 items-center gap-1.5">

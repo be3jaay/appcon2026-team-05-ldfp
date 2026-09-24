@@ -6,7 +6,10 @@ from .claims import CheckType, ClaimEntities
 from .openstat import VerificationStatus
 
 VerifiedClaimType = Literal["STATISTICAL", "LEGAL_ISSUANCE", "OTHER"]
-SourceType = Literal["OFFICIAL_STATISTICS", "OFFICIAL_DOCUMENT", "GOVERNMENT_DATASET", "PUBLISHED_FACT_CHECK"]
+SourceType = Literal[
+    "OFFICIAL_STATISTICS", "OFFICIAL_DOCUMENT", "GOVERNMENT_DATASET", "PUBLISHED_FACT_CHECK", "WEB_SEARCH_RESULT"
+]
+Reliability = Literal["government", "fact_checker", "news", "reference", "other"]
 
 
 class VerifyClaimRequest(BaseModel):
@@ -41,6 +44,9 @@ class VerifyClaimRequest(BaseModel):
     )
     claim_type: CheckType
     entities: ClaimEntities = ClaimEntities()
+    checkworthiness: float | None = Field(
+        None, ge=0, le=1, description="From the detector; paid AI web search only runs at or above the configured minimum."
+    )
     context: str | None = Field(
         None, max_length=3000, description="The transcript segment the claim came from (fills in details the claim text left out)."
     )
@@ -51,7 +57,9 @@ class VerifiedClaim(BaseModel):
     type: VerifiedClaimType
 
 
-AssessmentMethod = Literal["OFFICIAL_DATA", "DOCUMENT_MATCH", "AI_COMPARISON", "PUBLISHED_FACT_CHECK", "NONE"]
+AssessmentMethod = Literal[
+    "OFFICIAL_DATA", "DOCUMENT_MATCH", "AI_COMPARISON", "PUBLISHED_FACT_CHECK", "AI_WEB_SEARCH", "NONE"
+]
 
 
 class Assessment(BaseModel):
@@ -62,7 +70,8 @@ class Assessment(BaseModel):
         description=(
             "OFFICIAL_DATA: compared with a published figure; DOCUMENT_MATCH: the named document was "
             "(not) found; AI_COMPARISON: an LLM compared the claim with the official text shown as evidence; "
-            "PUBLISHED_FACT_CHECK: an independent fact-checker's published rating of the same claim."
+            "PUBLISHED_FACT_CHECK: an independent fact-checker's published rating of the same claim; "
+            "AI_WEB_SEARCH: an LLM searched the web and judged the claim from the pages listed as evidence."
         ),
     )
 
@@ -78,6 +87,7 @@ class EvidenceSource(BaseModel):
     document_number: str | None = None
     dataset: str | None = None
     table: str | None = None
+    reliability: Reliability | None = Field(None, description="For web search results: how strong the source is.")
 
 
 class EvidenceData(BaseModel):

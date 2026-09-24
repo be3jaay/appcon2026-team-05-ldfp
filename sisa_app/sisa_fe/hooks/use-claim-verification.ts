@@ -25,6 +25,8 @@ async function verify(
     body: JSON.stringify({
       claim: claim.text.slice(0, MAX_CLAIM_LENGTH),
       search_text: claim.text_en?.slice(0, MAX_CLAIM_LENGTH) ?? null,
+      // Paid AI web search only runs for claims worth checking.
+      checkworthiness: claim.checkworthiness,
       // The transcript line the claim came from: lets the backend recover details
       // (place, contractor) the claim's own text left out.
       context: context?.trim().slice(0, MAX_CONTEXT_LENGTH) || null,

@@ -31,3 +31,4 @@ class SourcesStatus(BaseModel):
 
     factcheck: bool
     llm: bool
+    web_search: bool = False

@@ -30,6 +30,10 @@ uv run pytest -q                 # no API keys or network needed
 | `CLAIMS_MAX_SEGMENTS_PER_CALL` | `8` | Batches that queue while waiting for a call slot are merged into one call, up to this size |
 | `LOG_LEVEL` | `INFO` | Backend log level (`DEBUG` for more) |
 | `FACTCHECK_API_KEY` | none | Google Fact Check Tools API key (Cloud console → enable "Fact Check Tools API" → API key). Without it, fact-check fallback is skipped |
+| `OPENAI_API_KEY` | none | AI web search (last-resort fallback). Without it the step is skipped |
+| `WEB_SEARCH_MODEL` | `gpt-5-search-api` | OpenAI search-enabled model (Chat Completions + `web_search_options`) |
+| `WEB_SEARCH_MIN_CHECKWORTHINESS` | `0.6` | Paid searches only run for claims at or above this check-worthiness |
+| `WEB_SEARCH_RPM` / `WEB_SEARCH_CACHE_SECONDS` | `10` / `86400` | Pacing and cache for web searches |
 | `FACTCHECK_CACHE_SECONDS` | `86400` | Identical fact-check searches are served from memory for this long |
 | `FLOOD_CONTROL_DATA_URL` | BetterGov.ph GitHub raw URL | DPWH flood control dataset (downloaded on first use) |
 | `FLOOD_CONTROL_CACHE_PATH` | `data/sources/flood_control.json` | Local copy (gitignored) |
@@ -132,6 +136,12 @@ The detection LLM also returns, per claim, `check_type` (`STATISTICAL | LEGAL | 
 | `LEGAL` | Official Gazette search | Existence/issuance claims ("EO 124 was issued"): SUPPORTED when the document is found. Content claims ("EO 124 reorganized DPWH"): one LLM call compares the claim with the official excerpt, giving SUPPORTED / CONTRADICTED, or NEEDS_CONTEXT if the excerpt doesn't settle it. Not found is INSUFFICIENT_EVIDENCE, never CONTRADICTED |
 | `OTHER`, or an unsupported statistic | none | **NO_SOURCE** ("SISA has no data source for … yet, so it was not checked"), unless a published fact-check settles it (below) |
 
+**AI web search (last fallback).** Idea from the `feat/pdm-test` branch, rebuilt with guardrails. If a claim is still NO_SOURCE / INSUFFICIENT_EVIDENCE after the data sources and published fact-checks, and `OPENAI_API_KEY` is set and the claim's check-worthiness is ≥ `WEB_SEARCH_MIN_CHECKWORTHINESS`, one call to an OpenAI search model judges it (`factual/misleading/needscontext/unfounded` → SUPPORTED/CONTRADICTED/NEEDS_CONTEXT/INSUFFICIENT_EVIDENCE, method `AI_WEB_SEARCH`).
+- Only pages the search actually used (the API's `url_citation` annotations) count as sources; URLs the model merely lists are dropped.
+- Every source gets a reliability label: government (`.gov.ph`), fact_checker, news, reference (Wikipedia), other. A factual/misleading verdict with no government/fact-checker/news source is **downgraded to NEEDS_CONTEXT**.
+- The prompt judges the claim only; it does not guess motives (the pdm-test "subtext / hidden agenda" field was deliberately left out).
+- Paced (`WEB_SEARCH_RPM`), cached per claim for a day, and skipped for low check-worthiness. Code: `clients/web_search_client.py`, `services/web_search_service.py`. `GET /api/v1/sources/status` reports `web_search`.
+
 **Published fact-checks (fallback).** When our data can't settle a claim (NO_SOURCE or INSUFFICIENT_EVIDENCE) and `FACTCHECK_API_KEY` is set, the claim is searched in Google's Fact Check Tools API (ClaimReview from Rappler, VERA Files, AFP Fact Check, FactRakers and others). The search uses the detector's English `text_en` (sent as `search_text`), because most fact-checks are in English. One LLM call decides which results review the **same** claim. A same-claim result with a clear rating becomes the verdict (method `PUBLISHED_FACT_CHECK`): false/fake/misleading/incorrect → CONTRADICTED, missing context/half true/unproven → NEEDS_CONTEXT, true/accurate → SUPPORTED. Conflicting ratings → NEEDS_CONTEXT. Other results are listed as RELATED evidence and never change the verdict; unmappable ratings (Satire, Explainer…) don't either. Without an LLM, nothing counts as the same claim. Conclusive official-data results never consult fact-checks. Endpoints: `POST /api/v1/fact-checks/search` (`{query, language?}`), `GET /api/v1/sources/status` (`{factcheck, llm}` for the UI's source list). Code: `clients/factcheck_client.py`, `services/factcheck_service.py`, `routes/factcheck_routes.py`.
 
 `POST /api/v1/claims/verify`
@@ -182,6 +192,7 @@ Source: `bettergovph/bettergov` → `src/data/flood_control/flood_control.json` 
 - `test_llm_providers.py`: OpenAI-compatible client (request shape, 429/503/timeout/bad key/retired model) and the fallback chain (fallback, cooldowns, all-busy)
 - `test_official_gazette.py`: feed parsing on **real captured responses** (`tests/fixtures/official_gazette/`), Cloudflare challenge/WAF detection, URL validation, HTTP errors, relevance, caching, document fallback, routes
 - `test_claim_verification.py`: STATISTICAL→OpenSTAT and LEGAL→Official Gazette routing and the conservative assessments
+- `test_web_search.py`: OpenAI search client (request shape, errors), cited-sources-only rule, reliability labels, weak-source downgrade, check-worthiness gate, cache, fallback order
 - `test_factcheck.py`: Fact Check API client (params, key errors as returned live, 429), keyword fallback, cache, rating mapping, same-claim matching, and the fallback in verification (verdict, related-only, conflicting, unmapped, errors, English search text)
 - `test_flood_control_projects.py`: single-project matching, detail recovery from the transcript line, contractor keywords vs place names, dollar note
 - `test_flood_control.py`: parsing, place/region/contractor/year-range filters, totals, disk cache and download fallback, routes, and flood control claim verification, all on **19 real records** (`tests/fixtures/flood_control/sample.json`)
@@ -212,5 +223,6 @@ Reads `data/eval/claim_detection.json`, which you can edit: `expected` lists one
 - Content claims about a found document ("EO 124 reorganized DPWH") are judged by one LLM call against the Official Gazette excerpt only (`services/evidence_judge.py`, method `AI_COMPARISON`). It can miss details that are beyond the opening text; those stay NEEDS_CONTEXT.
 - Official Gazette: only the feed is reachable, so evidence text is the site's **opening excerpt**, not the full document. Search results are the site's own (WordPress) ranking, 10 per page. "1987 Constitution" finds documents that cite it, not the Constitution page itself.
 - OpenSTAT verification covers the unemployment rate only.
+- AI web search is the weakest evidence tier: an LLM's reading of web pages. It is labelled as such, sources are shown with reliability, and it never overrides official data or published fact-checks. It is untested against the live API until `OPENAI_API_KEY` is set (model name `gpt-5-search-api` taken from feat/pdm-test).
 - Published fact-checks only exist for claims fact-checkers have already covered (mostly viral ones); new claims usually return nothing. They are secondary sources: the UI labels them as the fact-checker's verdict, not SISA's data.
 - Flood control figures are **contract costs of the projects listed in the DPWH map**, not total appropriations or disbursements; BARMM is missing and some projects may not be listed. "Project records" are contract rows, so one project with several components counts more than once.

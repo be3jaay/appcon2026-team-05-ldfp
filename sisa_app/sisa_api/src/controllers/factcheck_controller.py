@@ -3,7 +3,7 @@ from fastapi import HTTPException
 from ..clients.factcheck_client import FactCheckClientError
 from ..clients.llm_chain import build_llm_client
 from ..models.factcheck import FactCheckSearchRequest, FactCheckSearchResponse, SourcesStatus
-from ..services import factcheck_service
+from ..services import factcheck_service, web_search_service
 from ..services.claims.classifier import LLMConfigError
 
 
@@ -20,4 +20,4 @@ def sources_status() -> SourcesStatus:
         llm = True
     except LLMConfigError:
         llm = False
-    return SourcesStatus(factcheck=factcheck_service.is_configured(), llm=llm)
+    return SourcesStatus(factcheck=factcheck_service.is_configured(), llm=llm, web_search=web_search_service.is_configured())

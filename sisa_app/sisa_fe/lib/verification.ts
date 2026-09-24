@@ -15,6 +15,7 @@ export type AssessmentMethod =
   | "DOCUMENT_MATCH"
   | "AI_COMPARISON"
   | "PUBLISHED_FACT_CHECK"
+  | "AI_WEB_SEARCH"
   | "NONE"
 
 export interface EvidenceItem {
@@ -26,6 +27,7 @@ export interface EvidenceItem {
       | "OFFICIAL_DOCUMENT"
       | "GOVERNMENT_DATASET"
       | "PUBLISHED_FACT_CHECK"
+      | "WEB_SEARCH_RESULT"
     url: string
     title: string | null
     date: string | null
@@ -33,6 +35,9 @@ export interface EvidenceItem {
     document_number: string | null
     dataset: string | null
     table: string | null
+    /** Web search results only: how strong the source is. */
+    reliability?:
+      "government" | "fact_checker" | "news" | "reference" | "other" | null
   }
   data: {
     relevant_text: string | null
@@ -149,6 +154,8 @@ export const METHOD_NOTE: Record<AssessmentMethod, string | null> = {
   DOCUMENT_MATCH: "Matched against Official Gazette records.",
   AI_COMPARISON:
     "AI compared the claim with the official text shown below. Check the source.",
+  AI_WEB_SEARCH:
+    "AI searched the web and judged the claim from the pages below. Weaker than official data: check the sources.",
   PUBLISHED_FACT_CHECK:
     "Based on an independent fact-checker's published rating of the same claim (their verdict, not SISA's data).",
   NONE: null,
@@ -199,6 +206,14 @@ export function checkingSources(claim: Claim): string[] {
     return [sourceName("gazette", "Official Gazette"), factChecks]
   }
   return [factChecks]
+}
+
+export const RELIABILITY_LABEL: Record<string, string> = {
+  government: "Government",
+  fact_checker: "Fact-checker",
+  news: "News",
+  reference: "Reference",
+  other: "Other website",
 }
 
 /** Verdict implied by a fact-checker's own rating words (for colouring the rating chip). */
