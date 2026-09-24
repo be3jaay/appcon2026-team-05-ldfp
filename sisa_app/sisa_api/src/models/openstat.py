@@ -7,6 +7,7 @@ VerificationStatus = Literal[
     "CONTRADICTED",
     "NEEDS_CONTEXT",
     "INSUFFICIENT_EVIDENCE",
+    "NO_SOURCE",
     "ERROR",
 ]
 

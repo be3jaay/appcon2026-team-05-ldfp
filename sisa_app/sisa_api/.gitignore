@@ -11,3 +11,6 @@ wheels/
 
 # Environment variables
 .env
+
+# Downloaded datasets (fetched on first use)
+data/sources/

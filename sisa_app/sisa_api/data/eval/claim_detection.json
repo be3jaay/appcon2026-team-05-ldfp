@@ -1,0 +1,49 @@
+{
+  "_readme": "Labeled cases for scripts/eval_claim_detection.py. Edit freely. Each case: id, text, speaker (default '1'), context (lines spoken just before; strings or {speaker, text}), needs_context, expected (one item per claim: type, optional also_ok list of acceptable alternate types, optional literal_claim for figurative/sarcasm), note. expected [] means no claim (should be skipped by the prefilter or return nothing).",
+  "cases": [
+    {"id": "fact-01", "text": "Ang ₱125 milyon na confidential funds ay naubos sa loob ng 11 araw.", "context": [], "needs_context": false, "expected": [{"type": "fact"}], "note": "plain amount + duration"},
+    {"id": "fact-02", "text": "Sabi ng COA, may notice of disallowance na ₱73 milyon para sa opisina.", "context": [], "needs_context": false, "expected": [{"type": "fact"}], "note": "quoted source"},
+    {"id": "fact-03", "text": "Sa tingin ko, mga ₱100 milyon yata ang na-release ng DBM noong Disyembre.", "context": [], "needs_context": false, "expected": [{"type": "fact"}], "note": "sa tingin ko + hedged number"},
+    {"id": "fact-04", "text": "The unemployment rate went down to 3.9 percent last quarter according to the PSA.", "context": [], "needs_context": false, "expected": [{"type": "fact"}], "note": "English, statistic with source"},
+    {"id": "fact-05", "text": "Halos kalahati ng mga classroom sa rehiyon ay walang kuryente, ayon sa report ng DepEd.", "context": [], "needs_context": false, "expected": [{"type": "fact"}], "note": "hedged fraction + source"},
+    {"id": "fact-06", "text": "Tatlong beses nang na-postpone ang hearing mula noong Agosto.", "context": [], "needs_context": false, "expected": [{"type": "fact"}], "note": "count + date, number word"},
+
+    {"id": "legal-01", "text": "Ayon sa Konstitusyon, dapat agad ang trial kapag na-impeach ang isang opisyal.", "context": [], "needs_context": false, "expected": [{"type": "legal"}], "note": "constitutional requirement"},
+    {"id": "legal-02", "text": "Under Article XI, Section 3, the Senate has the sole power to try and decide impeachment cases.", "context": [], "needs_context": false, "expected": [{"type": "legal"}], "note": "English, cites article/section"},
+    {"id": "legal-03", "text": "Bawal sa batas ang paggamit ng confidential funds nang walang liquidation report sa COA.", "context": [], "needs_context": false, "expected": [{"type": "legal"}], "note": "what the law prohibits"},
+    {"id": "legal-04", "text": "Sa tingin ko, isang taon ang ban bago puwedeng mag-file ulit ng impeachment complaint.", "context": [], "needs_context": false, "expected": [{"type": "legal"}], "note": "sa tingin ko + legal rule"},
+
+    {"id": "opinion-01", "text": "Nakakahiya talaga ang ganitong klase ng serbisyo publiko.", "context": [], "needs_context": false, "expected": [{"type": "opinion"}], "note": "value judgment"},
+    {"id": "opinion-02", "text": "Para sa akin, siya ang pinakamagaling na lider na nakita ko.", "context": [], "needs_context": false, "expected": [{"type": "opinion"}], "note": "superlative but personal"},
+    {"id": "opinion-03", "text": "I think this administration deserves another chance from the people.", "context": [], "needs_context": false, "expected": [{"type": "opinion"}], "note": "I think + value, not fact"},
+    {"id": "opinion-04", "text": "Dapat mas pakinggan natin ang boses ng mga kabataan sa usaping ito.", "context": [], "needs_context": false, "expected": [{"type": "opinion"}], "note": "normative"},
+
+    {"id": "promise-01", "text": "Itatayo namin ang limampung bagong classroom bago matapos ang taon.", "context": [], "needs_context": false, "expected": [{"type": "promise"}], "note": "specific promise"},
+    {"id": "promise-02", "text": "I promise that every barangay will have a health center by 2028.", "context": [], "needs_context": false, "expected": [{"type": "promise"}], "note": "English promise with date"},
+    {"id": "promise-03", "text": "Sisiguraduhin ko na walang pamilyang magugutom sa aking termino.", "context": [], "needs_context": false, "expected": [{"type": "promise"}], "note": "absolute promise"},
+
+    {"id": "sarcasm-01", "text": "Wow, ang galing naman, very transparent talaga ng opisina ninyo.", "context": [{"speaker": "2", "text": "Hindi pa rin po naisusumite ang liquidation report hanggang ngayon."}], "needs_context": true, "expected": [{"type": "sarcasm", "literal_claim": "Hindi pa naisusumite ang liquidation report."}], "note": "needs the context line to read as sarcasm"},
+    {"id": "sarcasm-02", "text": "Ang sipag naman mag-budget, tatlong araw lang ubos na agad.", "context": [{"speaker": "2", "text": "Ang ₱125 milyon po ay nagastos sa loob ng tatlong araw."}], "needs_context": true, "expected": [{"type": "sarcasm", "also_ok": ["fact"], "literal_claim": "Naubos ang ₱125 milyon sa tatlong araw."}], "note": "sarcasm wrapping a factual claim"},
+    {"id": "sarcasm-03", "text": "Talaga namang world-class ang contractor na 'yan, grabe ang accomplishment.", "context": [{"speaker": "2", "text": "Walang natapos na proyekto ang contractor sa loob ng limang taon."}], "needs_context": true, "expected": [{"type": "sarcasm", "literal_claim": "Walang natapos na proyekto ang contractor sa limang taon."}], "note": "praise that means the opposite"},
+    {"id": "sarcasm-04", "text": "Oo naman, sobrang linis ng eleksyon, walang kahit anong reklamo, joke lang.", "context": [], "needs_context": false, "expected": [{"type": "sarcasm"}], "note": "explicit 'joke lang' marker"},
+
+    {"id": "figurative-01", "text": "Kinain ng buwaya ang ₱2 bilyong pondo para sa flood control.", "context": [], "needs_context": false, "expected": [{"type": "figurative", "also_ok": ["fact"], "literal_claim": "Nawala o ninakaw ang ₱2 bilyong pondo para sa flood control."}], "note": "metaphor with a literal claim inside"},
+    {"id": "figurative-02", "text": "Nalulunod na tayo sa bundok ng utang na umabot na sa ₱16 trilyon.", "context": [], "needs_context": false, "expected": [{"type": "figurative", "also_ok": ["fact"], "literal_claim": "Umabot na sa ₱16 trilyon ang utang ng bansa."}], "note": "hyperbole + number"},
+    {"id": "figurative-03", "text": "Ang buong budget process ay isang malaking sirkus.", "context": [], "needs_context": false, "expected": [{"type": "figurative", "also_ok": ["opinion"]}], "note": "metaphor, no literal claim"},
+    {"id": "figurative-04", "text": "This bill is a ticking time bomb for small businesses.", "context": [], "needs_context": false, "expected": [{"type": "figurative", "also_ok": ["opinion"]}], "note": "English metaphor"},
+
+    {"id": "vague-01", "text": "Marami raw ang nawala sa pondo pero hindi natin alam kung magkano.", "context": [], "needs_context": false, "expected": [{"type": "vague"}], "note": "missing amount"},
+    {"id": "vague-02", "text": "Some officials received money from the contractor.", "context": [], "needs_context": false, "expected": [{"type": "vague"}], "note": "missing who and how much"},
+    {"id": "vague-03", "text": "Ilang beses nang nangyari ang ganito sa nakaraang mga taon.", "context": [], "needs_context": false, "expected": [{"type": "vague"}], "note": "missing what and when"},
+    {"id": "vague-04", "text": "Tumaas daw nang malaki ang presyo ng bigas kamakailan.", "context": [], "needs_context": false, "expected": [{"type": "vague"}], "note": "no number, no period"},
+
+    {"id": "mixed-01", "text": "Nakakahiya, ₱50 million ang ginastos sa isang araw lang.", "context": [], "needs_context": false, "expected": [{"type": "opinion"}, {"type": "fact"}], "note": "opinion + fact in one sentence"},
+    {"id": "mixed-02", "text": "Ang galing ng DepEd, pero 20 percent lang ng budget ang nagamit nila noong 2023.", "context": [], "needs_context": false, "expected": [{"type": "opinion", "also_ok": ["sarcasm"]}, {"type": "fact"}], "note": "praise + utilization stat"},
+    {"id": "mixed-03", "text": "Sa tingin ko hindi siya tapat, at noong 2022 pumirma siya sa kontrata ng DPWH.", "context": [], "needs_context": false, "expected": [{"type": "opinion"}, {"type": "fact"}], "note": "sa tingin ko opinion + separate fact"},
+
+    {"id": "none-01", "text": "Magandang hapon po sa inyong lahat.", "context": [], "needs_context": false, "expected": [], "note": "greeting"},
+    {"id": "none-02", "text": "Objection, Your Honor.", "context": [], "needs_context": false, "expected": [], "note": "procedural"},
+    {"id": "none-03", "text": "Ano po ang masasabi ninyo tungkol dito?", "context": [], "needs_context": false, "expected": [], "note": "pure question"},
+    {"id": "none-04", "text": "Salamat po, Madam Chair.", "context": [], "needs_context": false, "expected": [], "note": "thanks + procedure"}
+  ]
+}

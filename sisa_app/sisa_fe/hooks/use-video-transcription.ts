@@ -10,6 +10,7 @@ import {
 import {
   disposeMediaElementAudio,
   mediaElementInput,
+  micInput,
   tabAudioInput,
 } from "@/lib/audio-inputs"
 import { isPlayableFile, parseYouTubeId } from "@/lib/video"
@@ -31,7 +32,12 @@ export function useVideoTranscription() {
   const live = status === "live"
   const busy = status === "connecting" || status === "stopping"
   const locked = live || busy
-  const hasMedia = source === "file" ? Boolean(videoUrl) : Boolean(youtubeId)
+  const hasMedia =
+    source === "file"
+      ? Boolean(videoUrl)
+      : source === "youtube"
+        ? Boolean(youtubeId)
+        : true
   const isEmpty = segments.length === 0 && !interimText
 
   useEffect(() => {
@@ -69,6 +75,10 @@ export function useVideoTranscription() {
   }, [youtubeInput])
 
   const startTranscribing = useCallback(async () => {
+    if (source === "mic") {
+      await start(micInput)
+      return
+    }
     if (source === "youtube") {
       await start(tabAudioInput)
       return

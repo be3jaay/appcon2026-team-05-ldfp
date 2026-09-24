@@ -1,0 +1,122 @@
+import logging
+from collections.abc import Callable
+
+from fastapi import WebSocket, WebSocketDisconnect
+from pydantic import ValidationError
+
+from ..clients.llm_chain import build_llm_client
+from ..config import is_origin_allowed, settings
+from ..models.claims import SegmentMessage
+from ..models.verification import VerificationResponse, VerifyClaimRequest
+from ..services import claim_verification_service
+from ..services.claims.classifier import ClaimClassifier, LLMClient, LLMConfigError
+from ..services.claims.detector import ClaimDetector
+from ..services.claims.rate_limiter import RateLimiter
+
+logger = logging.getLogger(__name__)
+
+LLMFactory = Callable[[], LLMClient]
+
+
+def llm_factory() -> LLMClient:
+    """The configured provider chain (e.g. Groq, falling back to Gemini)."""
+    return build_llm_client()
+
+
+_rate_limiter: RateLimiter | None = None
+
+
+def shared_rate_limiter() -> RateLimiter:
+    """One limiter for the whole process: every session shares the same API quota."""
+    global _rate_limiter
+    if _rate_limiter is None:
+        _rate_limiter = RateLimiter(settings.llm_rpm)
+    return _rate_limiter
+
+
+def get_llm_factory() -> LLMFactory:
+    """FastAPI dependency; tests override it with a fake LLM."""
+    return llm_factory
+
+
+async def run_session(websocket: WebSocket, llm_factory: LLMFactory) -> None:
+    # CORS does not cover websockets, so check Origin here.
+    if not is_origin_allowed(websocket.headers.get("origin")):
+        await websocket.close(code=1008, reason="Origin not allowed.")
+        return
+    await websocket.accept()
+
+    try:
+        llm = llm_factory()
+    except LLMConfigError as exc:
+        await websocket.send_json({"type": "error", "message": str(exc), "fatal": True})
+        await websocket.close(code=1011)
+        return
+
+    detector = ClaimDetector(
+        ClaimClassifier(llm),
+        websocket.send_json,
+        max_segments=settings.claims_batch_max_segments,
+        max_wait_s=settings.claims_batch_max_wait_s,
+        context_size=settings.claims_context_segments,
+        max_call_segments=settings.claims_max_segments_per_call,
+        max_attempts=settings.claims_llm_max_attempts,
+        rate_limiter=shared_rate_limiter(),
+    )
+    logger.info("[claims %s] session opened", detector.session)
+
+    try:
+        while True:
+            message = await websocket.receive_json()
+            kind = message.get("type") if isinstance(message, dict) else None
+            if kind == "stop":
+                result = await detector.stop()
+                await websocket.send_json(
+                    {
+                        "type": "done",
+                        "claims": len(result.claims),
+                        "skipped": len(result.skipped),
+                        "llm_calls": result.llm_calls,
+                    }
+                )
+                await websocket.close()
+                return
+            if kind == "segment":
+                try:
+                    segment = SegmentMessage.model_validate(message).segment
+                except ValidationError as exc:
+                    await websocket.send_json(
+                        {"type": "error", "message": f"Invalid segment: {exc.errors()[0]['msg']}"}
+                    )
+                    continue
+                await detector.add_segment(segment)
+                continue
+            await websocket.send_json({"type": "error", "message": f"Unknown message type: {kind!r}"})
+    except WebSocketDisconnect:
+        logger.info("[claims %s] websocket closed by client", detector.session)
+        detector.abort()
+    except ValueError:  # non-JSON frame
+        await websocket.send_json({"type": "error", "message": "Messages must be JSON.", "fatal": True})
+        detector.abort()
+        await websocket.close(code=1003)
+
+
+_verify_llm: LLMClient | None = None
+
+
+def _llm_for_verification() -> LLMClient | None:
+    """Same provider chain as detection, kept for the process so provider cooldowns persist.
+    None when no provider is configured: content claims then stay NEEDS_CONTEXT."""
+    global _verify_llm
+    if _verify_llm is None:
+        try:
+            _verify_llm = build_llm_client()
+        except LLMConfigError as exc:
+            logger.warning("claim verification without LLM comparison: %s", exc)
+            return None
+    return _verify_llm
+
+
+async def verify_claim(req: VerifyClaimRequest) -> VerificationResponse:
+    """Source errors come back as status ERROR in the body, so the UI can show them next to the claim."""
+    return await claim_verification_service.verify(req, _llm_for_verification(), shared_rate_limiter())
