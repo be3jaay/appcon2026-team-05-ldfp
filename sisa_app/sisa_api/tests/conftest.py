@@ -82,3 +82,13 @@ def seg(segment_id, text: str, speaker: str = "1", start_ms: int | None = None) 
 @pytest.fixture
 def fake_llm() -> FakeLLM:
     return FakeLLM()
+
+
+@pytest.fixture(autouse=True)
+def no_real_api_keys(monkeypatch):
+    """Tests must never reach paid/remote APIs just because a developer's .env has keys.
+    Tests that exercise a keyed source set the key themselves (with a mocked transport)."""
+    from src.config import settings
+
+    for key in ("factcheck_api_key", "openai_api_key"):
+        monkeypatch.setattr(settings, key, None)

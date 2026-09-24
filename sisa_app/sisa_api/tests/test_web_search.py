@@ -235,3 +235,22 @@ async def test_published_fact_check_runs_before_web_search(api, monkeypatch):
     res = await verification.verify(other("Order of fallbacks", checkworthiness=0.9))
     assert called == ["factcheck"] and res.assessment.method == "AI_WEB_SEARCH"
     assert res.assessment.status == "INSUFFICIENT_EVIDENCE"
+
+
+async def test_statistical_claim_without_metric_reaches_web_search(api):
+    api.body = completion({"verdict": "factual", "reasoning": "DMW banned deployment to the Black Sea.",
+                           "sources": [{"url": GOV[0]}]}, [GOV])
+    res = await verification.verify(
+        VerifyClaimRequest(claim="The DMW banned deployment of seafarers to the Northern Black Sea",
+                           claim_type="STATISTICAL", checkworthiness=0.9, entities=ClaimEntities())
+    )
+    assert res.assessment.method == "AI_WEB_SEARCH" and res.assessment.status == "SUPPORTED"
+
+
+async def test_rejected_key_disables_web_search(api, monkeypatch):
+    monkeypatch.setattr(svc, "_disabled_reason", None)
+    api.status, api.body = 401, {"error": {"message": "Incorrect API key provided"}}
+    await verification.verify(other("First claim after a bad key", checkworthiness=0.9))
+    await verification.verify(other("Second claim after a bad key", checkworthiness=0.9))
+    assert len(api.requests) == 1  # no more calls once the key is rejected
+    assert svc.is_configured() is False

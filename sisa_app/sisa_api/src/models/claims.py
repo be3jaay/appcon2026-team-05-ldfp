@@ -13,6 +13,13 @@ CLAIM_TYPES: tuple[str, ...] = ClaimType.__args__
 CheckType = Literal["STATISTICAL", "LEGAL", "OTHER"]
 CHECK_TYPES: tuple[str, ...] = CheckType.__args__
 
+# Named reasoning flaws the detector may flag (fixed list so the UI can label them).
+Fallacy = Literal[
+    "ad_hominem", "straw_man", "whataboutism", "red_herring", "false_dilemma", "slippery_slope",
+    "hasty_generalization", "appeal_to_emotion", "appeal_to_authority", "bandwagon",
+]
+FALLACIES: tuple[str, ...] = Fallacy.__args__
+
 
 class ClaimEntities(BaseModel):
     """What the claim says, as structured fields. Only the fields that apply are set."""
@@ -74,6 +81,10 @@ class Claim(BaseModel):
     literal_claim: str | None = None
     check_type: CheckType = "OTHER"
     entities: ClaimEntities | None = None
+    # Rhetoric (same LLM call): only set when clearly present in the words.
+    fallacy: Fallacy | None = None
+    evasion: bool = False
+    rhetoric_note: str | None = Field(None, description="One sentence explaining the fallacy/evasion flag.")
 
 
 class SkippedSegment(BaseModel):

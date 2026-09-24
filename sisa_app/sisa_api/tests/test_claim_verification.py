@@ -164,7 +164,8 @@ async def test_unsupported_metric_does_not_call_openstat(monkeypatch):
 
 async def test_statistical_without_metric():
     res = await verification.verify(statistical("It went up to 5%", value=5))
-    assert res.assessment.status == "NEEDS_CONTEXT"
+    # Not a data claim we can look up: "not checked", so the fallbacks get a turn (no dead-end "lacks context").
+    assert res.assessment.status == "NO_SOURCE"
 
 
 async def test_openstat_error_is_reported(monkeypatch):

@@ -200,3 +200,14 @@ def test_build_with_nothing_configured(monkeypatch):
 def test_unknown_provider_name():
     with pytest.raises(LLMConfigError, match="Unknown LLM provider"):
         llm_chain.build_provider("skynet")
+
+
+async def test_output_budget_is_sent():
+    seen = []
+
+    def handler(request):
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, json=OK_BODY)
+
+    await client(handler, max_output_tokens=4096).generate("s", "u")
+    assert seen[0]["max_tokens"] == 4096

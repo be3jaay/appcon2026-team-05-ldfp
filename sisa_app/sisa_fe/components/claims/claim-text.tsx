@@ -7,6 +7,10 @@ import { cn } from "@/lib/utils"
 import { checkingSources, VERDICT_META, type Verdict } from "@/lib/verification"
 import { CheckingStatus } from "@/components/claims/checking-status"
 import { VerdictIcon } from "@/components/claims/verdict-badge"
+import {
+  RhetoricMarker,
+  rhetoricSummary,
+} from "@/components/claims/rhetoric-badges"
 import type {
   Claim,
   ClaimType,
@@ -25,8 +29,8 @@ export const CLAIM_COLORS: Record<ClaimType, string> = {
 }
 
 export const CLAIM_LABELS: Record<ClaimType, string> = {
-  fact: "Fact",
-  legal: "Legal",
+  fact: "Fact claim",
+  legal: "Legal claim",
   opinion: "Opinion",
   promise: "Promise",
   sarcasm: "Sarcasm",
@@ -96,11 +100,13 @@ function describe(claim: Claim, verdict?: Verdict) {
     ...(verdict
       ? [`${VERDICT_META[verdict].label}: ${VERDICT_META[verdict].description}`]
       : []),
-    `${claim.type.toUpperCase()} · ${Math.round(claim.checkworthiness * 100)}% check-worthy`,
+    `${CLAIM_LABELS[claim.type]} · ${Math.round(claim.checkworthiness * 100)}% check-worthy`,
     claim.text,
     claim.reason,
   ]
   if (claim.literal_claim) parts.push(`Literal claim: ${claim.literal_claim}`)
+  const rhetoric = rhetoricSummary(claim)
+  if (rhetoric) parts.push(rhetoric)
   return parts.join("\n")
 }
 
@@ -131,6 +137,7 @@ function ClaimMark({
           className="ml-1 h-[0.85em] w-[0.85em] -translate-y-px align-middle"
         />
       ) : null}
+      <RhetoricMarker claim={claim} />
     </mark>
   )
 }

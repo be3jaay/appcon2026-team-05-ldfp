@@ -44,6 +44,7 @@ class GeminiClient:
         model: str,
         timeout_seconds: float = 30.0,
         thinking_level: str | None = "low",
+        max_output_tokens: int = 8192,
     ):
         if not api_key:
             raise GeminiConfigError(
@@ -51,6 +52,7 @@ class GeminiClient:
             )
         self.model = model
         self.name = f"gemini:{model}"
+        self.max_output_tokens = max_output_tokens
         self.thinking_level = thinking_level.upper() if thinking_level else None
         self._client = genai.Client(
             api_key=api_key,
@@ -64,6 +66,7 @@ class GeminiClient:
         config = types.GenerateContentConfig(
             system_instruction=system,
             temperature=0,
+            max_output_tokens=self.max_output_tokens,
             response_mime_type="application/json",
             response_json_schema=response_schema,
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),

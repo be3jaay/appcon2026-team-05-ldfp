@@ -24,10 +24,11 @@ uv run pytest -q                 # no API keys or network needed
 | `GEMINI_TIMEOUT_SECONDS` | `30` | Per-request timeout for Gemini |
 | `LLM_PROVIDERS` | every provider with a key: groq, cerebras, openrouter, gemini | Order to try providers in, e.g. `groq,gemini` |
 | `LLM_RPM` | `6` (`5` if Gemini is first) | Max claim LLM calls per minute, shared by all sessions; `0` = no limit. `GEMINI_RPM` is still read as a fallback |
+| `LLM_MAX_OUTPUT_TOKENS` | `6000` | Output budget per call. A low provider default cut long batches off mid-JSON and silently lost their claims |
 | `LLM_TIMEOUT_SECONDS` | `30` | Per-request timeout for OpenAI-compatible providers |
 | `LLM_REASONING_EFFORT` | `low` | Sent to reasoning models only (gpt-oss, qwen3…); empty = don't send |
-| `CLAIMS_LLM_MAX_ATTEMPTS` | `4` | Attempts per batch when every provider is busy. Uses the provider's retry delay, or 5 s/10 s/20 s backoff |
-| `CLAIMS_MAX_SEGMENTS_PER_CALL` | `8` | Batches that queue while waiting for a call slot are merged into one call, up to this size |
+| `CLAIMS_LLM_MAX_ATTEMPTS` | `6` | Attempts per batch when every provider is busy. Uses the provider's retry delay, or 5 s/10 s/20 s backoff |
+| `CLAIMS_MAX_SEGMENTS_PER_CALL` | `5` | Batches that queue while waiting for a call slot are merged into one call, up to this size |
 | `LOG_LEVEL` | `INFO` | Backend log level (`DEBUG` for more) |
 | `FACTCHECK_API_KEY` | none | Google Fact Check Tools API key (Cloud console → enable "Fact Check Tools API" → API key). Without it, fact-check fallback is skipped |
 | `OPENAI_API_KEY` | none | AI web search (last-resort fallback). Without it the step is skipped |
@@ -124,6 +125,19 @@ Server → client:
 {"type": "error", "message": "…", "fatal": true}
 {"type": "done", "claims": 5, "skipped": 3, "llm_calls": 2}
 ```
+
+## Rhetoric: evasion and fallacies
+
+The same detection call also returns, per claim, `fallacy` (one of ad_hominem, straw_man, whataboutism, red_herring, false_dilemma, slippery_slope, hasty_generalization, appeal_to_emotion, appeal_to_authority, bandwagon, or null), `evasion` (the speaker answered a question/criticism in the segment or a CONTEXT line without addressing it) and `rhetoric_note` (one sentence quoting the words). Only set when clearly present; ordinary news narration is never flagged; the prompt forbids guessing motives. The frontend shows "Evasive" / fallacy chips on the Current Claim card and in history, and a marker in the transcript.
+
+## Testing a whole transcript
+
+```bash
+uv run python scripts/run_transcript.py ../transcribe.md            # real providers and sources
+uv run python scripts/run_transcript.py ../transcribe.md --no-web   # skip the paid web search
+uv run python scripts/run_transcript.py ../transcribe.md --limit 12 --json out.json
+```
+Splits plain text into segments like live transcription (≈45 words), runs detection with real batching, verifies each claim exactly as the frontend does (with the surrounding lines as context), and prints every verdict plus totals by status and method.
 
 ## Claim verification
 

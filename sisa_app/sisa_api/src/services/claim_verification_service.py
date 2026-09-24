@@ -83,11 +83,17 @@ async def verify(
             claim=VerifiedClaim(text=req.claim, type="OTHER"),
             assessment=Assessment(status="NO_SOURCE", explanation=_no_source()),
         )
-    if result.assessment.status in ("NO_SOURCE", "INSUFFICIENT_EVIDENCE"):
+    if _unsettled(result):
         result = await _with_published_fact_checks(req.search_text or req.claim, result, llm, rate_limiter)
-    if result.assessment.status in ("NO_SOURCE", "INSUFFICIENT_EVIDENCE") and _web_search_allowed(req):
+    if _unsettled(result) and _web_search_allowed(req):
         result = await _with_web_search(req, result)
     return result
+
+
+def _unsettled(result: VerificationResponse) -> bool:
+    """Nothing checked it, nothing was found, or 'needs context' without any evidence behind it."""
+    status = result.assessment.status
+    return status in ("NO_SOURCE", "INSUFFICIENT_EVIDENCE") or (status == "NEEDS_CONTEXT" and not result.evidence)
 
 
 # --- AI web search (last resort) ----------------------------------------------------
@@ -221,7 +227,7 @@ async def _verify_statistical(text: str, entities: ClaimEntities, context: str |
     if _is_flood_control(f"{text} {context or ''}", entities):
         return await _verify_flood_control(text, entities, context)
     if not entities.metric:
-        return result("NEEDS_CONTEXT", "The claim does not name which statistic it is about.")
+        return result("NO_SOURCE", _no_source())
     metric = _METRIC_ALIASES.get(entities.metric.strip().lower(), entities.metric)
     try:
         openstat_service.resolve_dataset(metric)
@@ -279,7 +285,7 @@ def _openstat_evidence(checked: OpenStatCheckResponse) -> list[EvidenceItem]:
 
 # --- STATISTICAL (flood control) -> DPWH flood control projects ---------------------
 
-_FLOOD_RE = re.compile(r"flood|baha|dike|revetment|drainage|slope protection", re.I)
+_FLOOD_RE = re.compile(r"flood|baha|dike|dyke|revetment|drainage|slope protection", re.I)
 _AMOUNT_RE = re.compile(r"peso|php|₱|piso|cost|budget|spen[dt]|fund|pondo|amount|halaga|gastos|ginastos|contract value", re.I)
 _COUNT_RE = re.compile(r"number|count|bilang|ilan|projects?\b|proyekto|contracts?\b", re.I)
 _SCALE = [
@@ -303,7 +309,9 @@ _AGGREGATE_RE = re.compile(
 _SINGLE_RE = re.compile(
     r"\b(the|this|that|one|a single) project\b|\bang proyekto\b|\bproyektong ito\b|cost of one project", re.I
 )
-_STRUCTURE_RE = re.compile(r"road dike|dike|revetment|seawall|sea wall|slope protection|river control|esplanade|drainage", re.I)
+_STRUCTURE_RE = re.compile(
+    r"road dike|road dyke|dike|dyke|revetment|seawall|sea wall|slope protection|river control|esplanade|drainage", re.I
+)
 
 
 def _is_flood_control(text: str, entities: ClaimEntities) -> bool:
@@ -397,9 +405,15 @@ async def _verify_flood_control(text: str, entities: ClaimEntities, context: str
             "funded 2018-2025 and may not list every project.",
         )
 
-    is_amount = bool(_AMOUNT_RE.search(f"{entities.unit or ''} {entities.metric or ''}")) or (
-        not _COUNT_RE.search(f"{entities.unit or ''} {entities.metric or ''}") and (entities.value or 0) >= 1e5
-    )
+    measure = f"{entities.unit or ''} {entities.metric or ''}"
+    is_amount = bool(_AMOUNT_RE.search(measure))
+    is_count = bool(_COUNT_RE.search(measure))
+    if not is_amount and not is_count:
+        if entities.value is not None and not entities.unit and entities.value >= 1e5:
+            is_amount = True  # a bare large figure in a flood-control claim is a peso amount
+        elif entities.value is not None:
+            # The records hold peso costs and project counts only: "9 meters", "40%"... are not in them.
+            return result("NO_SOURCE", _no_source(entities.metric or entities.unit))
     actual = summary.total_contract_cost if is_amount else float(summary.projects)
     records = f"{summary.projects:,} project record{'s' if summary.projects != 1 else ''}"
     shown = _peso(actual) if is_amount else records
@@ -453,7 +467,7 @@ async def _verify_flood_control(text: str, entities: ClaimEntities, context: str
         candidates = flood_control_service.apply_filters(projects, filters)
         structure = _STRUCTURE_RE.search(about) or _STRUCTURE_RE.search(context or "")
         if structure:
-            word = structure.group(0).lower()
+            word = structure.group(0).lower().replace("dyke", "dike")
             named = [p for p in candidates if word in f"{p.description} {p.type_of_work}".lower()]
             candidates = named or candidates
         return _single_project_result(claim, claimed, candidates, filters, scope, currency_note)

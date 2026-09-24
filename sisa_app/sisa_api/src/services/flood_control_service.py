@@ -201,15 +201,19 @@ def resolve_region(text: str) -> str | None:
 _GENERIC_CONTRACTOR_WORDS = frozenset(
     "construction constructions builders builder corporation corp inc incorporated company co general gen "
     "contractor contractors development developers enterprises enterprise trading supply supplies services "
-    "engineering and the of phil philippines formerly jv joint venture".split()
+    "engineering and the of phil philippine philippines pilipinas filipino national public works "
+    "department first new golden royal great united global asia asian pacific metro city "
+    "formerly jv joint venture".split()
 )
+# A first word shared by this many different contractors doesn't identify one of them.
+_MAX_FIRMS_PER_KEYWORD = 2
 
 
 def contractor_keywords(projects: list[FloodControlProject]) -> dict[str, str]:
     """Distinctive first word of each contractor name -> that word, e.g. 'sunwest'.
     Only words of 5+ letters that aren't generic company words."""
     place_words = {w for p in projects for field in (p.province, p.municipality, p.region) for w in _words(field)}
-    keys: dict[str, str] = {}
+    firms: dict[str, set] = {}
     for p in projects:
         words = _words(p.contractor)
         if (
@@ -218,8 +222,11 @@ def contractor_keywords(projects: list[FloodControlProject]) -> dict[str, str]:
             and words[0] not in _GENERIC_CONTRACTOR_WORDS
             and words[0] not in place_words  # firms named "ORIENTAL ...", "BULACAN ..." would match places
         ):
-            keys[words[0]] = words[0]
-    return keys
+            # Count firms by the lead name: "SUNWEST, INC. / FGO CONSTRUCTION" (joint venture) and
+            # "SUNWEST, INC. (FORMERLY: ...)" are still one firm.
+            lead = " ".join(_words(p.contractor.split("/")[0].split("(")[0]))
+            firms.setdefault(words[0], set()).add(lead)
+    return {key: key for key, names in firms.items() if len(names) <= _MAX_FIRMS_PER_KEYWORD}
 
 
 def places_in_text(text: str, projects: list[FloodControlProject]) -> str | None:
@@ -236,7 +243,9 @@ def places_in_text(text: str, projects: list[FloodControlProject]) -> str | None
 
 
 def contractor_in_text(text: str, projects: list[FloodControlProject]) -> str | None:
-    words = set(_words(text))
+    tokens = _words(text)
+    # Speech-to-text splits names ("Sun West" for SUNWEST): also try adjacent words joined.
+    words = set(tokens) | {a + b for a, b in zip(tokens, tokens[1:])}
     for key in contractor_keywords(projects):
         if key in words:
             return key

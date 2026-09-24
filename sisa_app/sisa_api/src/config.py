@@ -97,6 +97,9 @@ class Settings:
     openrouter_api_key: str | None = os.environ.get("OPENROUTER_API_KEY") or None
     openrouter_model: str = os.environ.get("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct:free")
     llm_timeout_seconds: float = float(os.environ.get("LLM_TIMEOUT_SECONDS", "30"))
+    # Output budget per call. Reasoning models spend part of it thinking; a low provider default
+    # cut long batches off mid-JSON and silently lost their claims.
+    llm_max_output_tokens: int = int(os.environ.get("LLM_MAX_OUTPUT_TOKENS", "6000"))
     # For reasoning models (gpt-oss, qwen3...): low | medium | high; empty = don't send.
     llm_reasoning_effort: str | None = os.environ.get("LLM_REASONING_EFFORT", "low") or None
 
@@ -120,9 +123,12 @@ class Settings:
         or os.environ.get("GEMINI_RPM")
         or ("5" if not llm_providers or llm_providers[0] == "gemini" else "6")
     )
-    claims_llm_max_attempts: int = int(os.environ.get("CLAIMS_LLM_MAX_ATTEMPTS", "4"))
+    # Free tiers are often busy for a minute at a time; ride it out rather than lose the batch
+    # (backoff 5, 10, 20, 40, 80 s when no provider gives a retry delay).
+    claims_llm_max_attempts: int = int(os.environ.get("CLAIMS_LLM_MAX_ATTEMPTS", "6"))
     # Batches that queue up while waiting for a call slot are merged, up to this many segments.
-    claims_max_segments_per_call: int = int(os.environ.get("CLAIMS_MAX_SEGMENTS_PER_CALL", "8"))
+    # Smaller merged calls keep answers well inside the output budget.
+    claims_max_segments_per_call: int = int(os.environ.get("CLAIMS_MAX_SEGMENTS_PER_CALL", "5"))
     claims_batch_max_segments: int = int(os.environ.get("CLAIMS_BATCH_MAX_SEGMENTS", "3"))
     claims_batch_max_wait_s: float = float(os.environ.get("CLAIMS_BATCH_MAX_WAIT_S", "15"))
     claims_context_segments: int = int(os.environ.get("CLAIMS_CONTEXT_SEGMENTS", "2"))

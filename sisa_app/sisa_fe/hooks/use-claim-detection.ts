@@ -38,6 +38,10 @@ export interface Claim {
   literal_claim: string | null
   check_type: CheckType
   entities: ClaimEntities | null
+  /** Rhetoric flags from the detector (only set when clearly present). */
+  fallacy?: string | null
+  evasion?: boolean
+  rhetoric_note?: string | null
 }
 
 export interface SkippedSegment {

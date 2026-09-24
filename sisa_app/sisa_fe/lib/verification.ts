@@ -109,10 +109,10 @@ export const VERDICT_META: Record<
       "An official source was found, but it doesn't settle the claim on its own.",
   },
   "no-evidence": {
-    label: "No evidence",
+    label: "Unverified",
     color: "#5B6B7F",
     description:
-      "No matching official record was found. That alone doesn't make it false.",
+      "Looked it up, but no matching record or report was found. That alone doesn't make it false.",
   },
   checking: {
     label: "Checking…",
@@ -125,10 +125,10 @@ export const VERDICT_META: Record<
     description: "An official source couldn't be reached. Try again later.",
   },
   "no-source": {
-    label: "No source yet",
+    label: "Not checked",
     color: "#8A97A8",
     description:
-      "Not checked: none of SISA's sources cover this kind of claim yet.",
+      "None of SISA's sources cover this kind of claim yet, so it was not checked.",
   },
   "not-checkable": {
     label: "Not checkable",

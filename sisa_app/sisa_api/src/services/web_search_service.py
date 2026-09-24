@@ -173,8 +173,13 @@ _cache = _TTLCache(settings.web_search_cache_seconds)
 _limiter = RateLimiter(settings.web_search_rpm)
 
 
+# Set when the API rejects the key or model: stop calling (every call would fail the same way)
+# and report web search as not connected until the server restarts with a working key.
+_disabled_reason: str | None = None
+
+
 def is_configured() -> bool:
-    return bool(settings.openai_api_key)
+    return bool(settings.openai_api_key) and _disabled_reason is None
 
 
 def get_client() -> WebSearchClient:
@@ -202,7 +207,9 @@ async def check(claim: str, context: str | None = None) -> WebCheck | None:
     try:
         answer = await get_client().search(SEARCH_PROMPT, user)
     except WebSearchConfigError as exc:
-        logger.error("web search misconfigured: %s", exc.message)
+        global _disabled_reason
+        _disabled_reason = exc.message
+        logger.error("web search disabled until restart: %s", exc.message)
         return None
     except WebSearchError as exc:
         logger.warning("web search failed: %s", exc.message)

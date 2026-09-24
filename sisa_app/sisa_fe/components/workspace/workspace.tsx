@@ -27,9 +27,18 @@ import { TrustedSources } from "@/components/workspace/trusted-sources"
 export function Workspace() {
   const session = useVideoTranscription()
   const feed = useClaimFeed(session.claims, session.claimStatus)
+  // Context sent with each claim: the line before, its own line and the next one when it
+  // has arrived (a place or contractor is often named a sentence before or after the figure).
   const segmentText = useMemo(
     () =>
-      Object.fromEntries(session.segments.map((s) => [String(s.id), s.text])),
+      Object.fromEntries(
+        session.segments.map((s, i) => [
+          String(s.id),
+          [session.segments[i - 1]?.text, s.text, session.segments[i + 1]?.text]
+            .filter(Boolean)
+            .join(" "),
+        ])
+      ),
     [session.segments]
   )
   const verifications = useClaimVerification(session.claims, segmentText)

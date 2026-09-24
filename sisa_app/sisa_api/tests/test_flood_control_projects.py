@@ -120,3 +120,42 @@ async def test_flood_words_in_the_line_route_to_flood_data():
         stat("The project cost ₱289 million.", context=SEGMENT, metric="project cost", value=289e6, unit="pesos")
     )
     assert res.assessment.method == "OFFICIAL_DATA"  # not "no data source for 'project cost'"
+
+
+def test_speech_to_text_spellings_are_recovered():
+    line = "The road dyke was built by the Sun West Corporation in Oriental Mindoro."
+    assert svc.contractor_in_text(line, PROJECTS) == "sunwest"
+
+
+async def test_dyke_spelling_routes_to_flood_data():
+    res = await verification.verify(
+        stat("The road dyke cost 289 million pesos.",
+             context="The road dyke in Oriental Mindoro was built by the Sun West Corporation.",
+             metric="demolition cost", value=289e6, unit="pesos")
+    )
+    assert res.assessment.status == "SUPPORTED"
+    assert "Dulangan River" in res.assessment.explanation
+
+
+async def test_non_money_non_count_figures_are_not_compared_with_records():
+    # "9 meters shorter" must never be compared with a count of project records.
+    res = await verification.verify(
+        stat("The sheet piles were 9 meters shorter than required.", context=SEGMENT,
+             metric="sheet pile length shortfall", value=9, unit="meters")
+    )
+    assert res.assessment.status == "NO_SOURCE"
+    assert res.assessment.method == "NONE"
+
+
+def test_shared_first_words_are_not_contractor_keywords():
+    many = PROJECTS + [
+        project(contractor="PHILIPPINE BRIDGE CORP"),
+        project(contractor="GOLDSTAR PHILIPPINES"),
+        project(contractor="ACME ONE BUILDERS"), project(contractor="ACME TWO BUILDERS"),
+        project(contractor="ACME THREE BUILDERS"),
+    ]
+    keys = svc.contractor_keywords(many)
+    assert "philippine" not in keys  # generic word
+    assert "acme" not in keys  # shared by 3 different firms
+    assert "sunwest" in keys and "goldstar" in keys
+    assert svc.contractor_in_text("Philippine Public Works Chief testifies", many) is None

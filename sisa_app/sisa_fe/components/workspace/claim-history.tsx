@@ -14,6 +14,7 @@ import {
 import type { Claim } from "@/hooks/use-claim-detection"
 import { ClaimTypeChip } from "@/components/claims/claim-text"
 import { VerdictBadge } from "@/components/claims/verdict-badge"
+import { RhetoricBadges } from "@/components/claims/rhetoric-badges"
 import { claimTime } from "@/components/workspace/current-claim"
 import { Panel, PanelHeader } from "@/components/workspace/panel"
 
@@ -105,6 +106,7 @@ function HistoryItems({
                 />
               ) : null}
               <ClaimTypeChip type={claim.type} />
+              <RhetoricBadges claim={claim} />
               <span className="font-mono text-[10px] text-ink-faint">
                 Speaker {claim.speaker}
                 {claimTime(claim) ? ` · ${claimTime(claim)}` : ""}

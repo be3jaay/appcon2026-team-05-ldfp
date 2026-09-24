@@ -66,13 +66,18 @@ class FallbackLLMClient:
 
 
 def build_provider(name: str) -> LLMClient:
-    common = {"timeout_seconds": settings.llm_timeout_seconds, "reasoning_effort": settings.llm_reasoning_effort}
+    common = {
+        "timeout_seconds": settings.llm_timeout_seconds,
+        "reasoning_effort": settings.llm_reasoning_effort,
+        "max_output_tokens": settings.llm_max_output_tokens,
+    }
     if name == "gemini":
         return GeminiClient(
             api_key=settings.gemini_api_key,
             model=settings.gemini_model,
             timeout_seconds=settings.gemini_timeout_seconds,
             thinking_level=settings.gemini_thinking_level,
+            max_output_tokens=settings.llm_max_output_tokens,
         )
     if name == "groq":
         return OpenAICompatClient("groq", settings.groq_api_key, settings.groq_model, **common)

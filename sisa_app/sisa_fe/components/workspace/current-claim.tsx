@@ -17,6 +17,7 @@ import {
 import type { Claim } from "@/hooks/use-claim-detection"
 import { ClaimTypeChip, CLAIM_COLORS } from "@/components/claims/claim-text"
 import { VerdictBadge } from "@/components/claims/verdict-badge"
+import { RhetoricBadges } from "@/components/claims/rhetoric-badges"
 import { Panel, PanelHeader } from "@/components/workspace/panel"
 
 export function claimTime(claim: Claim) {
@@ -242,6 +243,17 @@ export function CurrentClaim({
               {claimTime(claim) ? ` · ${claimTime(claim)}` : ""}
             </span>
           </div>
+
+          {claim.evasion || claim.fallacy ? (
+            <div className="flex flex-col gap-1 rounded-lg bg-[#9A3412]/[0.05] px-2.5 py-2">
+              <RhetoricBadges claim={claim} />
+              {claim.rhetoric_note ? (
+                <p className="m-0 text-[12px] leading-relaxed text-ink-muted">
+                  {claim.rhetoric_note}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
 
           {claim.quote ? (
             <blockquote

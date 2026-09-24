@@ -24,6 +24,8 @@ pnpm typecheck
 Browser Soniox hook → finished segment → `WS /api/v1/claims/ws` → `ClaimDetector`: `prefilter` (no LLM) → `SegmentBatcher` (flush on speaker change / 3 segments / 15 s timer / stop) → worker (shared `RateLimiter` at `LLM_RPM`, merges queued batches, retries 429/503) → `ClaimClassifier` (ONE LLM call through the provider chain `clients/llm_chain.py`: Groq → Gemini by default, previous 2 lines sent as CONTEXT only, returns a verbatim `quote` per claim). The frontend highlights quotes via `sisa_fe/components/claims/claim-text.tsx`. Mic and video share this path. See `sisa_api/README.md` for the protocol, config and known gaps.
 
 Rules to keep:
+- Rhetoric (evasion, fallacy) comes from the same detection call; keep it conservative and never about motives.
+- To test end to end, run `scripts/run_transcript.py <file>` (real APIs) and read the verdict/method totals.
 - Never one LLM call per segment or per speaker turn. Tests count calls on a fake client.
 - Don't add SDK-level retries: they burn shared quota. Retries go through the detector and limiter; a busy provider falls through to the next one in the chain.
 - New providers: if they speak the OpenAI chat format, add a preset to `openai_compat_client.PROVIDERS` and `llm_chain.build_provider`.

@@ -12,7 +12,7 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, ValidationError, field_validator
 
-from ...models.claims import CHECK_TYPES, CLAIM_TYPES, Claim, ClaimEntities, TranscriptSegment
+from ...models.claims import CHECK_TYPES, CLAIM_TYPES, FALLACIES, Claim, ClaimEntities, TranscriptSegment
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +88,9 @@ may be labelled; genuine questions are not claims.
 - "quote": the exact words from the segment that carry this claim, copied verbatim (same \
 spelling, no paraphrase), as short as possible while still containing the claim.
 - "text": the claim restated as one short, self-contained sentence in the language the \
-segment is spoken in (English stays English), resolving pronouns from context where obvious. \
+segment is spoken in: an English segment gives English "text", a Tagalog one Tagalog, Taglish \
+stays Taglish; never translate it (translation goes in "text_en"). Resolve pronouns from context \
+where obvious. \
 Name the specific thing the claim is about as said in the segment (e.g. "the river dike in \
 San Isidro built by ABC Builders cost ₱150 million", not "the project cost ₱150 million"). Do not \
 add facts that were not said.
@@ -115,11 +117,29 @@ STATISTICAL: metric (e.g. "unemployment rate", "total flood control spending", \
 125000000, "3.9%" -> 3.9), unit ("percent", "pesos", "projects", "persons"…), date (period, \
 e.g. "July 2026" or "2023"), geography (the region, province or city named; "Philippines" only \
 if clearly national), contractor (the company named, if any). LEGAL: document_type (e.g. "Executive Order"), document_number (e.g. "124"), date, subject (what the document is claimed to do or contain, or empty if the claim is only that it exists or was issued).
+- "fallacy": name a reasoning flaw only when it is clearly present in the words, else "". \
+One of: ad_hominem (attacks the person instead of the point), straw_man (misstates the \
+other side's position), whataboutism (answers criticism by pointing to others' faults), \
+red_herring (switches to an unrelated topic), false_dilemma (only two options when there are \
+more), slippery_slope (claims one step will inevitably lead to extreme outcomes), \
+hasty_generalization (sweeping conclusion from few cases), appeal_to_emotion (emotion instead \
+of evidence as the argument), appeal_to_authority ("trust me / an expert said so" as the only \
+support), bandwagon (true because many believe it). Ordinary reporting has no fallacy.
+- "evasion": true only when the segment responds to a question, criticism or accusation \
+(in the segment or a CONTEXT line) without addressing it: deflecting, changing the subject, \
+attacking the questioner, or a non-answer. News narration and plain statements are never evasive.
+- Always check each segment that answers a question or criticism in the segment or a CONTEXT \
+line. Examples: CONTEXT "Saan napunta ang pondo?" + segment "Bakit ako ang tinatanong? Yung mga \
+nauna mas malaki pa ang ginastos" → evasion true, fallacy "whataboutism". Segment "Kapag hindi \
+ito pumasa, babagsak ang buong ekonomiya" → fallacy "slippery_slope".
+- "rhetoric_note": if fallacy or evasion is set, one short English sentence quoting the words \
+that show it; otherwise "". Describe what was said, never guess motives or intentions.
 - Do not judge whether a claim is true. Only detect and label.
 
 Return ONLY JSON of this shape:
 {"claims": [{"segment": <number of the segment>, "quote": "...", "text": "...", "text_en": "...", "type": "fact|legal|opinion|\
-promise|sarcasm|figurative|vague", "checkworthiness": 0.0, "reason": "...", "literal_claim": "", "check_type": "STATISTICAL|LEGAL|OTHER", "entities": {...only the fields that apply...}}]}
+promise|sarcasm|figurative|vague", "checkworthiness": 0.0, "reason": "...", "literal_claim": "", "check_type": "STATISTICAL|LEGAL|OTHER", "entities": {...only the fields that apply...}, "fallacy": "", \
+"evasion": false, "rhetoric_note": ""}]}
 Example entities: STATISTICAL {"metric": "unemployment rate", "value": 5, "unit": "percent", "date": "July 2026", "geography": "Philippines"}; LEGAL {"document_type": "Executive Order", "document_number": "124"}; OTHER {}.
 If there are no claims, return {"claims": []}.
 """
@@ -141,6 +161,9 @@ RESPONSE_SCHEMA: dict[str, Any] = {
                     "reason": {"type": "string"},
                     "literal_claim": {"type": "string"},
                     "check_type": {"type": "string", "enum": list(CHECK_TYPES)},
+                    "fallacy": {"type": "string", "enum": ["", *FALLACIES]},
+                    "evasion": {"type": "boolean"},
+                    "rhetoric_note": {"type": "string"},
                     "entities": {
                         "type": "object",
                         "properties": {
@@ -197,6 +220,9 @@ class _RawClaim(BaseModel):
     literal_claim: str | None = None
     check_type: str = "OTHER"
     entities: ClaimEntities | None = None
+    fallacy: str | None = None
+    evasion: bool = False
+    rhetoric_note: str | None = None
 
     @field_validator("segment", mode="before")
     @classmethod
@@ -222,6 +248,17 @@ class _RawClaim(BaseModel):
     def _known_type(cls, v: Any) -> str:
         v = str(v or "").strip().lower()
         return v if v in CLAIM_TYPES else "vague"
+
+    @field_validator("fallacy", mode="before")
+    @classmethod
+    def _known_fallacy(cls, v: Any) -> str | None:
+        key = re.sub(r"[\s-]+", "_", str(v or "").strip().lower())
+        return key if key in FALLACIES else None
+
+    @field_validator("evasion", mode="before")
+    @classmethod
+    def _bool(cls, v: Any) -> bool:
+        return v is True or (isinstance(v, str) and v.strip().lower() == "true")
 
     @field_validator("check_type", mode="before")
     @classmethod
@@ -257,7 +294,7 @@ class _RawClaim(BaseModel):
     def _reason_str(cls, v: Any) -> str:
         return "" if v is None else str(v).strip()
 
-    @field_validator("quote", "literal_claim", "text_en", mode="before")
+    @field_validator("quote", "literal_claim", "text_en", "rhetoric_note", mode="before")
     @classmethod
     def _literal_str(cls, v: Any) -> str | None:
         if v is None:
@@ -320,6 +357,16 @@ def parse_claims(raw: str, batch: list[TranscriptSegment]) -> list[Claim]:
         logger.warning("Claim classifier output has no 'claims' list: %.200r", raw)
         return []
 
+    # Models occasionally nest the list again ({"claims": [{"claims": [...]}]}); flatten it
+    # instead of discarding every claim in the batch.
+    flat: list = []
+    for item in items:
+        if isinstance(item, dict) and isinstance(item.get("claims"), list) and "segment" not in item:
+            flat.extend(item["claims"])
+        else:
+            flat.append(item)
+    items = flat
+
     claims: list[Claim] = []
     per_segment: dict[str, int] = {}
     for item in items:
@@ -352,6 +399,10 @@ def parse_claims(raw: str, batch: list[TranscriptSegment]) -> list[Claim]:
                 # Only statements that assert something checkable get routed to a source.
                 check_type=parsed.check_type if parsed.type in _ROUTABLE else "OTHER",
                 entities=_entities_for(parsed.check_type, parsed.entities) if parsed.type in _ROUTABLE else None,
+                fallacy=parsed.fallacy,
+                evasion=parsed.evasion,
+                # A note without a flag is noise; a flag without a note still stands.
+                rhetoric_note=parsed.rhetoric_note if (parsed.fallacy or parsed.evasion) else None,
             )
         )
     return claims

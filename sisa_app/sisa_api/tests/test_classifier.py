@@ -288,3 +288,34 @@ def test_text_en_is_parsed():
     raw = json.dumps({"claims": [item(1, "Naubos ang pondo", text_en="The funds ran out")]})
     assert parse_claims(raw, BATCH)[0].text_en == "The funds ran out"
     assert parse_claims(json.dumps({"claims": [item(1, "x")]}), BATCH)[0].text_en is None
+
+
+def test_rhetoric_fields_are_parsed_and_normalised():
+    raw = json.dumps(
+        {
+            "claims": [
+                item(1, "Bakit ako ang tinatanong, eh sila rin naman", "opinion", fallacy="Whataboutism",
+                     evasion=True, rhetoric_note="Points to others instead of answering the question."),
+                item(1, "Plain report", "fact", fallacy="not-a-fallacy", evasion="false", rhetoric_note="stray note"),
+                item(2, "Emotional appeal", "opinion", fallacy="appeal to emotion"),
+            ]
+        }
+    )
+    a, b, c = parse_claims(raw, BATCH)
+    assert (a.fallacy, a.evasion) == ("whataboutism", True) and a.rhetoric_note.startswith("Points to others")
+    assert (b.fallacy, b.evasion, b.rhetoric_note) == (None, False, None)  # unknown fallacy dropped, note ignored
+    assert c.fallacy == "appeal_to_emotion" and c.evasion is False
+
+
+def test_prompt_and_schema_cover_rhetoric():
+    from src.services.claims.classifier import RESPONSE_SCHEMA
+
+    props = RESPONSE_SCHEMA["properties"]["claims"]["items"]["properties"]
+    assert "whataboutism" in props["fallacy"]["enum"] and props["evasion"]["type"] == "boolean"
+    assert "never guess motives" in SYSTEM_PROMPT
+    assert "News narration and plain statements are never evasive" in SYSTEM_PROMPT
+
+
+def test_nested_claims_list_is_flattened_not_dropped():
+    raw = json.dumps({"claims": [{"claims": [item(1, "a"), item(2, "b")]}, item(1, "c")]})
+    assert [c.text for c in parse_claims(raw, BATCH)] == ["a", "b", "c"]

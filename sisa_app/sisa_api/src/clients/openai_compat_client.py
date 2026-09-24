@@ -65,6 +65,7 @@ class OpenAICompatClient:
         base_url: str | None = None,
         timeout_seconds: float = 30.0,
         reasoning_effort: str | None = None,
+        max_output_tokens: int = 8192,
         transport: httpx.AsyncBaseTransport | None = None,
     ):
         if not api_key:
@@ -75,6 +76,7 @@ class OpenAICompatClient:
         self._headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         self._timeout = timeout_seconds
         self.reasoning_effort = reasoning_effort
+        self.max_output_tokens = max_output_tokens
         self._transport = transport
 
     @property
@@ -87,6 +89,7 @@ class OpenAICompatClient:
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
             "temperature": 0,
             "response_format": {"type": "json_object"},
+            "max_tokens": self.max_output_tokens,
         }
         if self.reasoning_effort and _is_reasoning_model(self.model):
             body["reasoning_effort"] = self.reasoning_effort
@@ -122,6 +125,8 @@ class OpenAICompatClient:
             content = data["choices"][0]["message"]["content"] or ""
         except (ValueError, KeyError, IndexError, TypeError) as exc:
             raise RetryableLLMError(f"{self.provider} returned an unexpected body", _OVERLOAD_BACKOFF_S) from exc
+        if data["choices"][0].get("finish_reason") == "length":
+            logger.warning("%s hit the output limit (%d tokens); the answer may be cut off", self.name, self.max_output_tokens)
 
         usage = data.get("usage") or {}
         logger.info(
