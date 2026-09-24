@@ -134,12 +134,21 @@ nauna mas malaki pa ang ginastos" → evasion true, fallacy "whataboutism". Segm
 ito pumasa, babagsak ang buong ekonomiya" → fallacy "slippery_slope".
 - "rhetoric_note": if fallacy or evasion is set, one short English sentence quoting the words \
 that show it; otherwise "". Describe what was said, never guess motives or intentions.
+
+Conflicting statements: lines marked "[E1]", "[E2]" are claims made EARLIER in the session \
+(never extract them).
+- "contradicts": the label of an EARLIER claim this claim clearly conflicts with, e.g. "E2", \
+else "". Only when both are about the same thing and cannot both be true: a different number \
+for the same figure, did vs did not, yes vs no. Any speaker counts. A later update, a \
+correction the speaker announces, or a different subject is not a conflict.
+- "contradiction_note": if "contradicts" is set, one short English sentence naming both \
+statements (who said what); otherwise "".
 - Do not judge whether a claim is true. Only detect and label.
 
 Return ONLY JSON of this shape:
 {"claims": [{"segment": <number of the segment>, "quote": "...", "text": "...", "text_en": "...", "type": "fact|legal|opinion|\
 promise|sarcasm|figurative|vague", "checkworthiness": 0.0, "reason": "...", "literal_claim": "", "check_type": "STATISTICAL|LEGAL|OTHER", "entities": {...only the fields that apply...}, "fallacy": "", \
-"evasion": false, "rhetoric_note": ""}]}
+"evasion": false, "rhetoric_note": "", "contradicts": "", "contradiction_note": ""}]}
 Example entities: STATISTICAL {"metric": "unemployment rate", "value": 5, "unit": "percent", "date": "July 2026", "geography": "Philippines"}; LEGAL {"document_type": "Executive Order", "document_number": "124"}; OTHER {}.
 If there are no claims, return {"claims": []}.
 """
@@ -164,6 +173,8 @@ RESPONSE_SCHEMA: dict[str, Any] = {
                     "fallacy": {"type": "string", "enum": ["", *FALLACIES]},
                     "evasion": {"type": "boolean"},
                     "rhetoric_note": {"type": "string"},
+                    "contradicts": {"type": "string"},
+                    "contradiction_note": {"type": "string"},
                     "entities": {
                         "type": "object",
                         "properties": {
@@ -223,6 +234,8 @@ class _RawClaim(BaseModel):
     fallacy: str | None = None
     evasion: bool = False
     rhetoric_note: str | None = None
+    contradicts: str | None = None
+    contradiction_note: str | None = None
 
     @field_validator("segment", mode="before")
     @classmethod
@@ -294,7 +307,9 @@ class _RawClaim(BaseModel):
     def _reason_str(cls, v: Any) -> str:
         return "" if v is None else str(v).strip()
 
-    @field_validator("quote", "literal_claim", "text_en", "rhetoric_note", mode="before")
+    @field_validator(
+        "quote", "literal_claim", "text_en", "rhetoric_note", "contradicts", "contradiction_note", mode="before"
+    )
     @classmethod
     def _literal_str(cls, v: Any) -> str | None:
         if v is None:
@@ -315,8 +330,12 @@ def verbatim_quote(quote: str | None, segment_text: str) -> str | None:
     return q if q and _norm(q) in _norm(segment_text) else None
 
 
-def build_user_prompt(batch: list[TranscriptSegment], context: list[TranscriptSegment]) -> str:
+def build_user_prompt(
+    batch: list[TranscriptSegment], context: list[TranscriptSegment], earlier: list[Claim] | None = None
+) -> str:
     lines: list[str] = []
+    for i, claim in enumerate(earlier or [], start=1):
+        lines.append(f"[E{i}] (EARLIER claim, do not extract) Speaker {claim.speaker}: {claim.text_en or claim.text}")
     for i, seg in enumerate(context, start=1):
         lines.append(f"[C{i}] (CONTEXT only, do not extract) Speaker {seg.speaker}: {seg.text.strip()}")
     for i, seg in enumerate(batch, start=1):
@@ -342,7 +361,15 @@ def _extract_json(raw: str) -> Any:
     return None
 
 
-def parse_claims(raw: str, batch: list[TranscriptSegment]) -> list[Claim]:
+def _earlier_id(label: str | None, earlier: list[Claim]) -> str | None:
+    """"E2" (or "2") -> the id of that earlier claim; anything else -> None."""
+    m = re.fullmatch(r"\[?E?(\d+)\]?", (label or "").strip(), re.I)
+    if not m or not 1 <= int(m.group(1)) <= len(earlier):
+        return None
+    return earlier[int(m.group(1)) - 1].id
+
+
+def parse_claims(raw: str, batch: list[TranscriptSegment], earlier: list[Claim] | None = None) -> list[Claim]:
     """Turn raw LLM output into validated claims mapped back to their segments.
     Never raises on bad output; invalid items are dropped and logged."""
     data = _extract_json(raw)
@@ -403,6 +430,8 @@ def parse_claims(raw: str, batch: list[TranscriptSegment]) -> list[Claim]:
                 evasion=parsed.evasion,
                 # A note without a flag is noise; a flag without a note still stands.
                 rhetoric_note=parsed.rhetoric_note if (parsed.fallacy or parsed.evasion) else None,
+                contradicts=(conflict := _earlier_id(parsed.contradicts, earlier or [])),
+                contradiction_note=parsed.contradiction_note if conflict else None,
             )
         )
     return claims
@@ -414,18 +443,22 @@ class ClaimClassifier:
         self.calls = 0
 
     async def classify(
-        self, batch: list[TranscriptSegment], context: list[TranscriptSegment] | None = None
+        self,
+        batch: list[TranscriptSegment],
+        context: list[TranscriptSegment] | None = None,
+        earlier: list[Claim] | None = None,
     ) -> list[Claim]:
-        """Exactly one LLM call per non-empty batch."""
+        """Exactly one LLM call per non-empty batch. `earlier`: claims already made in the
+        session, so the model can flag a new claim that conflicts with one of them."""
         if not batch:
             return []
         self.calls += 1
         try:
-            raw = await self.llm.generate(SYSTEM_PROMPT, build_user_prompt(batch, context or []), RESPONSE_SCHEMA)
+            raw = await self.llm.generate(SYSTEM_PROMPT, build_user_prompt(batch, context or [], earlier), RESPONSE_SCHEMA)
         except RetryableLLMError as exc:
             raise ClassifierError(
                 f"LLM call failed: {exc}", retry_after=exc.retry_after, exponential=exc.exponential
             ) from exc
         except Exception as exc:
             raise ClassifierError(f"LLM call failed: {exc}") from exc
-        return parse_claims(raw, batch)
+        return parse_claims(raw, batch, earlier)

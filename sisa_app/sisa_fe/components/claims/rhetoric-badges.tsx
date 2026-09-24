@@ -1,4 +1,4 @@
-import { MessageSquareWarning } from "lucide-react"
+import { GitCompareArrows, MessageSquareWarning } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import type { Claim } from "@/hooks/use-claim-detection"
@@ -17,9 +17,11 @@ export const FALLACY_LABELS: Record<string, string> = {
 }
 
 const RHETORIC_COLOR = "#9A3412"
+const CONFLICT_COLOR = "#6D28D9"
 
+/** Evasion, a fallacy, or a conflict with an earlier claim. */
 export function hasRhetoric(claim: Claim): boolean {
-  return Boolean(claim.evasion || claim.fallacy)
+  return Boolean(claim.evasion || claim.fallacy || claim.contradicts)
 }
 
 export function rhetoricSummary(claim: Claim): string | null {
@@ -30,17 +32,29 @@ export function rhetoricSummary(claim: Claim): string | null {
       ? `Fallacy: ${FALLACY_LABELS[claim.fallacy] ?? claim.fallacy}`
       : null,
   ].filter(Boolean)
-  return (
-    parts.join(" · ") + (claim.rhetoric_note ? ` — ${claim.rhetoric_note}` : "")
-  )
+  const lines = parts.length
+    ? [
+        parts.join(" · ") +
+          (claim.rhetoric_note ? ` — ${claim.rhetoric_note}` : ""),
+      ]
+    : []
+  if (claim.contradicts)
+    lines.push(
+      "Conflicts with an earlier claim" +
+        (claim.contradiction_note ? ` — ${claim.contradiction_note}` : "")
+    )
+  return lines.join("\n")
 }
 
-/** "Evasive" / "Fallacy: …" chips; the note explains them on hover. */
+/** "Evasive" / "Fallacy: …" / "Conflicts with earlier" chips; notes explain them on hover. */
 export function RhetoricBadges({
   claim,
+  onOpenClaim,
   className,
 }: {
   claim: Claim
+  /** Makes the conflict chip open the earlier claim. */
+  onOpenClaim?: (id: string) => void
   className?: string
 }) {
   if (!hasRhetoric(claim)) return null
@@ -72,7 +86,59 @@ export function RhetoricBadges({
           {FALLACY_LABELS[claim.fallacy] ?? claim.fallacy}
         </span>
       ) : null}
+      {claim.contradicts ? (
+        <ConflictChip
+          className={chip}
+          note={claim.contradiction_note}
+          onOpen={
+            onOpenClaim && claim.contradicts
+              ? () => onOpenClaim(claim.contradicts as string)
+              : undefined
+          }
+        />
+      ) : null}
     </span>
+  )
+}
+
+function ConflictChip({
+  className,
+  note,
+  onOpen,
+}: {
+  className: string
+  note?: string | null
+  onOpen?: () => void
+}) {
+  const style = {
+    backgroundColor: `${CONFLICT_COLOR}12`,
+    color: CONFLICT_COLOR,
+  }
+  const content = (
+    <>
+      <GitCompareArrows className="h-3 w-3" />
+      Conflicts with earlier
+    </>
+  )
+  if (!onOpen)
+    return (
+      <span className={className} style={style} title={note ?? undefined}>
+        {content}
+      </span>
+    )
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation()
+        onOpen()
+      }}
+      className={cn(className, "hover:underline")}
+      style={style}
+      title={note ? `${note} (click to open the earlier claim)` : undefined}
+    >
+      {content}
+    </button>
   )
 }
 

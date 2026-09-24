@@ -11,11 +11,13 @@ import pytest
 
 from src.clients.web_search_client import (
     Citation,
+    GroqBrowserSearchClient,
     SearchAnswer,
     WebSearchClient,
     WebSearchConfigError,
     WebSearchError,
     parse_answer,
+    parse_groq_answer,
 )
 from src.config import settings
 from src.models.claims import ClaimEntities
@@ -65,9 +67,37 @@ def api(monkeypatch):
     fake = Api()
     monkeypatch.setattr(settings, "openai_api_key", "sk-test")
     monkeypatch.setattr(settings, "factcheck_api_key", None)  # isolate from the fact-check step
-    monkeypatch.setattr(svc, "_client", WebSearchClient("sk-test", "gpt-5-search-api", URL, transport=httpx.MockTransport(fake)))
+    client = WebSearchClient("sk-test", "gpt-5-search-api", URL, transport=httpx.MockTransport(fake))
+    monkeypatch.setattr(svc, "_providers", {"openai": svc._Provider("openai", lambda: client, 0)})
     monkeypatch.setattr(svc, "_cache", svc._TTLCache(600))
-    monkeypatch.setattr(svc, "_limiter", svc.RateLimiter(0))
+    return fake
+
+
+def groq_completion(payload: dict, results: list[tuple[str, str]]) -> dict:
+    return {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": json.dumps(payload),
+                    "executed_tools": [
+                        {"type": "browser_search", "search_results": {"results": [{"url": u, "title": t} for u, t in results]}},
+                        {"type": "browser.open", "search_results": {"results": [{"url": results[0][0], "title": "page"}]}}
+                        if results else {"type": "browser.open"},
+                    ],
+                }
+            }
+        ]
+    }
+
+
+@pytest.fixture
+def groq(api, monkeypatch):
+    """Groq browser search as the second provider behind the OpenAI fake."""
+    fake = Api()
+    client = GroqBrowserSearchClient("gsk-test", "openai/gpt-oss-120b", transport=httpx.MockTransport(fake))
+    monkeypatch.setattr(settings, "web_search_providers", ("openai", "groq"))
+    svc._providers["groq"] = svc._Provider("groq", lambda: client, 0)
     return fake
 
 
@@ -248,9 +278,52 @@ async def test_statistical_claim_without_metric_reaches_web_search(api):
 
 
 async def test_rejected_key_disables_web_search(api, monkeypatch):
-    monkeypatch.setattr(svc, "_disabled_reason", None)
     api.status, api.body = 401, {"error": {"message": "Incorrect API key provided"}}
     await verification.verify(other("First claim after a bad key", checkworthiness=0.9))
     await verification.verify(other("Second claim after a bad key", checkworthiness=0.9))
     assert len(api.requests) == 1  # no more calls once the key is rejected
     assert svc.is_configured() is False
+
+
+async def test_out_of_credits_disables_the_provider(api):
+    api.status = 429
+    api.body = {"error": {"type": "insufficient_quota", "code": "credit_balance_exhausted", "message": "No credits"}}
+    await verification.verify(other("First claim with no credits", checkworthiness=0.9))
+    await verification.verify(other("Second claim with no credits", checkworthiness=0.9))
+    assert len(api.requests) == 1 and svc.is_configured() is False
+    assert "no credits" in svc.status()["openai"]
+
+
+async def test_plain_rate_limit_does_not_disable(api):
+    api.status, api.body, api.headers = 429, {"error": {"type": "requests", "message": "Rate limit"}}, {"retry-after": "0"}
+    await verification.verify(other("A rate-limited claim", checkworthiness=0.9))
+    assert svc.is_configured() is True
+
+
+async def test_groq_takes_over_when_openai_has_no_credits(groq, api):
+    api.status, api.body = 429, {"error": {"code": "insufficient_quota"}}
+    groq.body = groq_completion(
+        {"verdict": "factual", "reasoning": "DMW confirmed 40 seafarers are safe【1†L11-L18】.", "sources": [{"url": GOV[0]}]},
+        [GOV, BLOG],
+    )
+    res = await verification.verify(other("DMW says 40 Filipino seafarers are safe", checkworthiness=0.9))
+    assert res.assessment.method == "AI_WEB_SEARCH" and res.assessment.status == "SUPPORTED"
+    assert "【" not in res.assessment.explanation
+    body = json.loads(groq.requests[0].content)
+    assert body["tools"] == [{"type": "browser_search"}] and body["model"] == "openai/gpt-oss-120b"
+
+
+async def test_groq_answer_citing_an_unseen_url_is_not_trusted(groq, api):
+    api.status, api.body = 429, {"error": {"code": "insufficient_quota"}}
+    groq.body = groq_completion(
+        {"verdict": "factual", "reasoning": "Confirmed.", "sources": [{"url": "https://invented.gov.ph/x"}]}, [BLOG]
+    )
+    res = await verification.verify(other("A claim only a blog mentions", checkworthiness=0.9))
+    # The invented URL is dropped; only the blog the search returned remains, which can't settle it.
+    assert [e.source.url for e in res.evidence] == [BLOG[0]]
+    assert res.assessment.status == "NEEDS_CONTEXT"
+
+
+def test_parse_groq_answer_collects_search_and_opened_pages():
+    answer = parse_groq_answer(groq_completion({"verdict": "unfounded"}, [NEWS, GOV]))
+    assert [c.url for c in answer.citations] == [NEWS[0], GOV[0]]

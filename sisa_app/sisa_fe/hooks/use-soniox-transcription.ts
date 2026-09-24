@@ -49,7 +49,12 @@ function floatTo16BitPCM(input: Float32Array): Int16Array {
   return output
 }
 
-export function useSonioxTranscription(languageHint = "en") {
+// Philippine speech switches between Tagalog and English mid-sentence (Taglish): hint both.
+const DEFAULT_LANGUAGE_HINTS = ["tl", "en"]
+
+export function useSonioxTranscription(
+  languageHints: string[] = DEFAULT_LANGUAGE_HINTS
+) {
   const [status, setStatus] = useState<TranscriptStatus>("idle")
   const [segments, setSegments] = useState<TranscriptSegment[]>([])
   const [interimText, setInterimText] = useState("")
@@ -224,7 +229,7 @@ export function useSonioxTranscription(languageHint = "en") {
               audio_format: "pcm_s16le",
               sample_rate: audioCtx.sampleRate,
               num_channels: 1,
-              language_hints: [languageHint || "en"],
+              language_hints: languageHints,
               enable_endpoint_detection: true,
               enable_speaker_diarization: true,
             })
@@ -261,7 +266,7 @@ export function useSonioxTranscription(languageHint = "en") {
       connectClaims,
       finalizeLastSegment,
       handleMessage,
-      languageHint,
+      languageHints,
       reset,
       startCapture,
       stopClaims,

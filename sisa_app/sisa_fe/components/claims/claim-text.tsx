@@ -1,7 +1,7 @@
 "use client"
 
 import { CircleAlert } from "lucide-react"
-import { useMemo, type ReactNode } from "react"
+import { useMemo, type KeyboardEvent, type ReactNode } from "react"
 
 import { cn } from "@/lib/utils"
 import { checkingSources, VERDICT_META, type Verdict } from "@/lib/verification"
@@ -110,20 +110,43 @@ function describe(claim: Claim, verdict?: Verdict) {
   return parts.join("\n")
 }
 
+function clickProps(onSelect: (() => void) | undefined) {
+  if (!onSelect) return {}
+  return {
+    role: "button",
+    tabIndex: 0,
+    onClick: onSelect,
+    onKeyDown: (e: KeyboardEvent) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault()
+        onSelect()
+      }
+    },
+  }
+}
+
 function ClaimMark({
   claim,
   verdict,
+  onSelect,
   children,
 }: {
   claim: Claim
   verdict?: Verdict
+  onSelect?: () => void
   children: ReactNode
 }) {
   const color = CLAIM_COLORS[claim.type]
   return (
     <mark
       title={describe(claim, verdict)}
-      className="cursor-help rounded-[3px] px-[2px] text-inherit decoration-2 underline-offset-4"
+      {...clickProps(onSelect)}
+      className={cn(
+        "rounded-[3px] px-[2px] text-inherit decoration-2 underline-offset-4",
+        onSelect
+          ? "cursor-pointer transition-[filter] hover:brightness-95 focus-visible:outline-2 focus-visible:outline-brand-accent"
+          : "cursor-help"
+      )}
       style={{
         backgroundColor: `${color}1f`,
         textDecorationLine: "underline",
@@ -166,13 +189,26 @@ export function ClaimTypeChip({
   )
 }
 
-function ClaimChip({ claim, verdict }: { claim: Claim; verdict?: Verdict }) {
+function ClaimChip({
+  claim,
+  verdict,
+  onSelect,
+}: {
+  claim: Claim
+  verdict?: Verdict
+  onSelect?: () => void
+}) {
   return (
-    <ClaimTypeChip
-      type={claim.type}
-      title={describe(claim, verdict)}
-      className="ml-1.5 cursor-help align-middle"
-    />
+    <span {...clickProps(onSelect)}>
+      <ClaimTypeChip
+        type={claim.type}
+        title={describe(claim, verdict)}
+        className={cn(
+          "ml-1.5 align-middle",
+          onSelect ? "cursor-pointer" : "cursor-help"
+        )}
+      />
+    </span>
   )
 }
 
@@ -193,6 +229,7 @@ export function ClaimText({
   claims = [],
   status,
   verdicts = {},
+  onSelectClaim,
   className,
 }: {
   text: string
@@ -200,6 +237,8 @@ export function ClaimText({
   status?: SegmentClaimStatus
   /** Verification verdict per claim id. */
   verdicts?: Record<string, Verdict>
+  /** Makes each highlight clickable (e.g. to open the claim in the claims panel). */
+  onSelectClaim?: (id: string) => void
   className?: string
 }) {
   const { ranges, unplaced } = useMemo(
@@ -216,6 +255,7 @@ export function ClaimText({
         key={r.claim.id}
         claim={r.claim}
         verdict={verdicts[r.claim.id]}
+        onSelect={onSelectClaim && (() => onSelectClaim(r.claim.id))}
       >
         {text.slice(r.start, r.end)}
       </ClaimMark>
@@ -239,7 +279,12 @@ export function ClaimText({
     <p className={cn("m-0", className)}>
       {pieces}
       {unplaced.map((claim) => (
-        <ClaimChip key={claim.id} claim={claim} verdict={verdicts[claim.id]} />
+        <ClaimChip
+          key={claim.id}
+          claim={claim}
+          verdict={verdicts[claim.id]}
+          onSelect={onSelectClaim && (() => onSelectClaim(claim.id))}
+        />
       ))}
       {activity.length ? (
         <CheckingStatus

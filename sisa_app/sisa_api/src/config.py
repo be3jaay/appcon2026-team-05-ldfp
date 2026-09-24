@@ -66,6 +66,20 @@ class Settings:
     web_search_rpm: float = float(os.environ.get("WEB_SEARCH_RPM", "10"))
     web_search_cache_seconds: float = float(os.environ.get("WEB_SEARCH_CACHE_SECONDS", "86400"))
     web_search_min_checkworthiness: float = float(os.environ.get("WEB_SEARCH_MIN_CHECKWORTHINESS", "0.6"))
+    # Providers tried in order; one that rejects its key or runs out of credits is skipped until
+    # restart. "groq" = Groq's free browser_search tool on the Groq key (≈7k tokens a search,
+    # and the free tier allows ~8k tokens/min per model, so it is paced slowly).
+    web_search_providers: tuple[str, ...] = tuple(
+        p.strip().lower() for p in os.environ.get("WEB_SEARCH_PROVIDERS", "openai,groq").split(",") if p.strip()
+    )
+    web_search_groq_model: str = os.environ.get("WEB_SEARCH_GROQ_MODEL", "openai/gpt-oss-120b")
+    # A key from a second Groq account keeps searches from eating detection's per-minute budget.
+    web_search_groq_api_key: str | None = (
+        os.environ.get("WEB_SEARCH_GROQ_API_KEY") or os.environ.get("GROQ_API_KEY") or None
+    )
+    web_search_groq_rpm: float = float(
+        os.environ.get("WEB_SEARCH_GROQ_RPM") or ("2" if os.environ.get("WEB_SEARCH_GROQ_API_KEY") else "1")
+    )
 
     # Official Gazette (primary source for laws and executive issuances).
     # Search uses the site's own WordPress search delivered as RSS (/feed/?s=...);

@@ -85,8 +85,13 @@ async def verify(
         )
     if _unsettled(result):
         result = await _with_published_fact_checks(req.search_text or req.claim, result, llm, rate_limiter)
-    if _unsettled(result) and _web_search_allowed(req):
-        result = await _with_web_search(req, result)
+    if _unsettled(result):
+        if _web_search_allowed(req):
+            result = await _with_web_search(req, result)
+        else:
+            logger.info("verify: web search skipped (%s)", _web_search_skip_reason(req))
+    logger.info("verify %s -> %s via %s: %.80r", req.claim_type, result.assessment.status,
+                result.assessment.method, req.claim)
     return result
 
 
@@ -112,6 +117,13 @@ def _web_search_allowed(req: VerifyClaimRequest) -> bool:
         return False
     # Paid call: skip low-value claims (callers that don't send a score are allowed).
     return req.checkworthiness is None or req.checkworthiness >= settings.web_search_min_checkworthiness
+
+
+def _web_search_skip_reason(req: VerifyClaimRequest) -> str:
+    if not web_search_service.is_configured():
+        off = web_search_service.status()
+        return "; ".join(f"{k}: {v}" for k, v in off.items()) or "no web search key"
+    return f"check-worthiness {req.checkworthiness} below {settings.web_search_min_checkworthiness}"
 
 
 async def _with_web_search(req: VerifyClaimRequest, result: VerificationResponse) -> VerificationResponse:
@@ -178,6 +190,7 @@ async def _with_published_fact_checks(
         logger.warning("fact-check search failed: %s", exc.message)
         return result
     if not found.results:
+        logger.info("fact-check: no published fact-check found")
         result.assessment.explanation += " No published fact-check of it was found either."
         return result
 
@@ -185,6 +198,8 @@ async def _with_published_fact_checks(
     related = [_fact_check_evidence(c, "RELATED") for c in matched.related[:_MAX_EVIDENCE]]
     rated = [(c, factcheck_service.rating_status(c.rating)) for c in matched.same]
     usable = [(c, s) for c, s in rated if s]
+    logger.info("fact-check: %d found, %d about the same claim (%d with a usable rating), %d related",
+                len(found.results), len(matched.same), len(usable), len(matched.related))
 
     if not usable:
         if matched.same or related:

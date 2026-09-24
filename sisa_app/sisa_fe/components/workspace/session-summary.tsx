@@ -106,7 +106,7 @@ function SummaryBody({ summary }: { summary: SessionSummaryState }) {
 
 /**
  * End-of-session Tagalog analysis. Opens itself when the summary starts after
- * Stop / End, and stays reachable through a pill once dismissed.
+ * Stop / End, and stays reachable through a small toolbar button.
  */
 export function SessionSummary({ summary }: { summary: SessionSummaryState }) {
   const [open, setOpen] = useState(false)
@@ -121,18 +121,23 @@ export function SessionSummary({ summary }: { summary: SessionSummaryState }) {
 
   return (
     <Dialog.Root open={open} onOpenChange={setOpen}>
-      {!open ? (
-        <Dialog.Trigger className="flex w-full items-center gap-2 rounded-full border border-line bg-white px-3.5 py-2 text-left text-[13px] text-ink shadow-[0_1px_2px_rgba(15,27,42,0.04)] transition-colors hover:border-brand-accent/50">
-          <Sparkles className="h-4 w-4 shrink-0 text-brand-accent" />
-          <span className="min-w-0 flex-1 truncate">
-            {summary.state === "done"
-              ? "Tingnan ang pangwakas na buod"
-              : summary.state === "failed"
-                ? "Hindi nagawa ang buod — tingnan ang detalye"
-                : "Binubuo ang pangwakas na buod…"}
-          </span>
-        </Dialog.Trigger>
-      ) : null}
+      <Dialog.Trigger
+        title={
+          summary.state === "done"
+            ? "Tingnan ang pangwakas na buod"
+            : summary.state === "failed"
+              ? "Hindi nagawa ang buod — tingnan ang detalye"
+              : "Binubuo ang pangwakas na buod…"
+        }
+        className="flex items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 py-1.5 text-xs font-medium text-brand transition-colors hover:border-brand-accent/50"
+      >
+        {summary.state === "done" || summary.state === "failed" ? (
+          <Sparkles className="h-3.5 w-3.5 text-brand-accent" />
+        ) : (
+          <LoaderCircle className="h-3.5 w-3.5 animate-spin text-brand-accent" />
+        )}
+        <span className="hidden sm:inline">Buod</span>
+      </Dialog.Trigger>
 
       <Dialog.Portal>
         <Dialog.Backdrop className="fixed inset-0 z-40 bg-ink/40 transition-opacity data-[ending-style]:opacity-0 data-[starting-style]:opacity-0" />

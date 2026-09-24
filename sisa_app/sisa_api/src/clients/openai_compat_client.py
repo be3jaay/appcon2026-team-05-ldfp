@@ -6,6 +6,7 @@ system prompt already spells out the JSON shape.
 """
 
 import logging
+import re
 import time
 
 import httpx
@@ -27,27 +28,47 @@ PROVIDERS: dict[str, str] = {
 }
 
 
+def _error_message(response: httpx.Response) -> str:
+    try:
+        error = response.json().get("error") or {}
+        return str(error.get("message") or "") if isinstance(error, dict) else str(error)
+    except ValueError:
+        return response.text[:500]
+
+
+def _parse_duration(raw: str) -> float | None:
+    """ "7", "7.5s", "1m2.5s", "697ms", "2h3m" -> seconds."""
+    raw = raw.strip().lower()
+    try:
+        return float(raw.rstrip("s"))
+    except ValueError:
+        pass
+    total, number = 0.0, ""
+    for part in raw.replace("ms", "u"):
+        if part.isdigit() or part == ".":
+            number += part
+        elif number:
+            total += float(number) * {"h": 3600, "m": 60, "s": 1, "u": 0.001}.get(part, 0)
+            number = ""
+    return total or None
+
+
 def _retry_after(response: httpx.Response) -> float | None:
+    if response.status_code == 429:
+        # Groq says how long in the message ("Please try again in 4m20.5s"), including for
+        # daily limits, where the reset headers describe other windows.
+        if m := re.search(r"try again in ([\d.hms]+)", _error_message(response)):
+            return _parse_duration(m.group(1).rstrip("."))
     headers = ["retry-after"]
     if response.status_code == 429:
-        headers += ["x-ratelimit-reset-requests", "x-ratelimit-reset-tokens"]
+        # Groq's x-ratelimit-reset-requests is the DAILY request window (can be ~25 min): only
+        # wait for it when the error is about requests; a per-minute token limit resets in seconds.
+        per_day = "requests per day" in _error_message(response).lower()
+        headers += ["x-ratelimit-reset-requests"] if per_day else ["x-ratelimit-reset-tokens"]
     for header in headers:
-        raw = response.headers.get(header, "").strip().lower()
-        if not raw:
-            continue
-        try:
-            return float(raw.rstrip("s"))
-        except ValueError:
-            # Groq style "1m2.5s" / "250ms"
-            total, number = 0.0, ""
-            for part in raw.replace("ms", "u"):
-                if part.isdigit() or part == ".":
-                    number += part
-                elif number:
-                    total += float(number) * {"h": 3600, "m": 60, "s": 1, "u": 0.001}.get(part, 0)
-                    number = ""
-            if total:
-                return total
+        raw = response.headers.get(header, "").strip()
+        if raw and (seconds := _parse_duration(raw)):
+            return seconds
     return None
 
 
@@ -104,7 +125,8 @@ class OpenAICompatClient:
 
         if response.status_code in _RETRYABLE:
             delay = _retry_after(response)
-            message = f"{self.provider} {response.status_code}"
+            detail = _error_message(response)
+            message = f"{self.provider} {response.status_code}" + (f": {detail[:240]}" if detail else "")
             if delay is not None:
                 raise RetryableLLMError(message, delay)
             fallback = _RATE_LIMIT_BACKOFF_S if response.status_code == 429 else _OVERLOAD_BACKOFF_S

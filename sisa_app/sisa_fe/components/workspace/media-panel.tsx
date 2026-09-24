@@ -1,7 +1,7 @@
 "use client"
 
-import { Mic, Upload } from "lucide-react"
-import { useEffect, useRef, useState } from "react"
+import { CircleHelp, Mic, Upload } from "lucide-react"
+import { useEffect, useRef, useState, type ReactNode } from "react"
 
 import { cn } from "@/lib/utils"
 import { resumeMediaElementAudio } from "@/lib/audio-inputs"
@@ -16,6 +16,7 @@ import {
 } from "@/constants/video"
 import type { useVideoTranscription } from "@/hooks/use-video-transcription"
 import { Panel } from "@/components/workspace/panel"
+import { InfoPopover } from "@/components/workspace/popover"
 
 type Session = ReturnType<typeof useVideoTranscription>
 
@@ -59,7 +60,17 @@ function MicStage({ live }: { live: boolean }) {
   )
 }
 
-export function MediaPanel({ session }: { session: Session }) {
+export function MediaPanel({
+  session,
+  actions,
+  overlay,
+}: {
+  session: Session
+  /** Extra toolbar buttons shown before Start/Stop (e.g. the session summary). */
+  actions?: ReactNode
+  /** Shown over whichever stage is visible (video, YouTube or mic), e.g. claim alerts. */
+  overlay?: ReactNode
+}) {
   const {
     status,
     error,
@@ -112,19 +123,22 @@ export function MediaPanel({ session }: { session: Session }) {
             </button>
           ))}
         </div>
-        <button
-          type="button"
-          onClick={live ? stop : () => void startTranscribing()}
-          disabled={busy || (!live && !hasMedia)}
-          className={cn(
-            "shrink-0 rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50",
-            live
-              ? "bg-[#E4572E] text-white hover:bg-[#cf4a23]"
-              : "bg-brand text-white hover:bg-brand-deep"
-          )}
-        >
-          {VIDEO_CONTROL_LABELS[status]}
-        </button>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {actions}
+          <button
+            type="button"
+            onClick={live ? stop : () => void startTranscribing()}
+            disabled={busy || (!live && !hasMedia)}
+            className={cn(
+              "shrink-0 rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+              live
+                ? "bg-[#E4572E] text-white hover:bg-[#cf4a23]"
+                : "bg-brand text-white hover:bg-brand-deep"
+            )}
+          >
+            {VIDEO_CONTROL_LABELS[status]}
+          </button>
+        </div>
       </div>
 
       {error ? (
@@ -141,6 +155,7 @@ export function MediaPanel({ session }: { session: Session }) {
             source !== "file" && "hidden"
           )}
         >
+          {source === "file" ? overlay : null}
           <video
             ref={videoRef}
             src={videoUrl ?? undefined}
@@ -231,11 +246,26 @@ export function MediaPanel({ session }: { session: Session }) {
               >
                 {VIDEO_COPY.youtubeLoad}
               </button>
+              <InfoPopover
+                label="How YouTube audio works"
+                title="How YouTube audio works"
+                triggerClassName="shrink-0 rounded-lg px-1.5 text-ink-faint transition-colors hover:bg-canvas hover:text-brand-accent"
+                trigger={<CircleHelp className="h-4 w-4" />}
+              >
+                <p className="m-0 px-4 py-3 text-[12px] leading-relaxed text-ink-muted">
+                  YouTube doesn&apos;t let websites read its audio directly.
+                  When you press <b className="text-ink">Start</b>, share{" "}
+                  <b className="text-ink">this tab</b> with{" "}
+                  <b className="text-ink">Share tab audio</b> turned on, then
+                  play the video. Works in Chrome and Edge.
+                </p>
+              </InfoPopover>
             </form>
             {youtubeError ? (
               <p className="m-0 text-[13px] text-[#a3361a]">{youtubeError}</p>
             ) : null}
-            <div className="aspect-video overflow-hidden rounded-lg bg-ink">
+            <div className="relative aspect-video overflow-hidden rounded-lg bg-ink">
+              {overlay}
               {youtubeId ? (
                 <iframe
                   src={youTubeEmbedUrl(youtubeId)}
@@ -250,23 +280,12 @@ export function MediaPanel({ session }: { session: Session }) {
                 </div>
               )}
             </div>
-            <details className="text-[12px] leading-relaxed text-ink-muted">
-              <summary className="cursor-pointer font-medium text-brand-accent">
-                How YouTube audio works
-              </summary>
-              <p className="m-0 mt-1">
-                YouTube doesn&apos;t let websites read its audio directly. When
-                you press <b className="text-ink">Start</b>, share{" "}
-                <b className="text-ink">this tab</b> with{" "}
-                <b className="text-ink">Share tab audio</b> turned on, then play
-                the video. Works in Chrome and Edge.
-              </p>
-            </details>
           </>
         ) : null}
 
         {source === "mic" ? (
-          <div className="aspect-video overflow-hidden rounded-lg max-sm:aspect-[16/7]">
+          <div className="relative aspect-video overflow-hidden rounded-lg max-sm:aspect-[16/7]">
+            {overlay}
             <MicStage live={live} />
           </div>
         ) : null}

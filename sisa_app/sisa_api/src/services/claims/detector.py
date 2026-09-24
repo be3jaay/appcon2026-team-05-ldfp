@@ -19,7 +19,7 @@ from collections import Counter, deque
 from collections.abc import Awaitable, Callable, Iterable
 from typing import Any
 
-from ...models.claims import DetectionResult, SkippedSegment, TranscriptSegment
+from ...models.claims import Claim, DetectionResult, SkippedSegment, TranscriptSegment
 from .batcher import FlushReason, SegmentBatcher
 from .classifier import ClaimClassifier, ClassifierError
 from .prefilter import prefilter
@@ -31,6 +31,9 @@ Emit = Callable[[dict[str, Any]], Awaitable[None]]
 Batch = tuple[list[TranscriptSegment], list[TranscriptSegment]]  # (segments, context)
 
 _HISTORY_SIZE = 64
+# Earlier assertions sent with each call so conflicts can be flagged (kept short: prompt size).
+_EARLIER_CLAIMS = 12
+_CONFLICT_TYPES = {"fact", "legal", "promise"}
 
 
 async def _no_emit(_: dict[str, Any]) -> None:
@@ -67,6 +70,11 @@ class ClaimDetector:
         self._queue: asyncio.Queue[Batch] = asyncio.Queue()
         self._worker: asyncio.Task | None = None
         self._segments_seen = 0
+
+    def _earlier_claims(self) -> list[Claim]:
+        """The session's latest assertions, sent so a conflicting new claim can be flagged."""
+        asserted = [c for c in self.result.claims if c.type in _CONFLICT_TYPES]
+        return asserted[-_EARLIER_CLAIMS:]
 
     def _log(self, level: int, msg: str, *args: Any) -> None:
         logger.log(level, "[claims %s] " + msg, self.session, *args)
@@ -195,7 +203,7 @@ class ClaimDetector:
             )
             started = time.perf_counter()
             try:
-                claims = await self.classifier.classify(segments, context)
+                claims = await self.classifier.classify(segments, context, self._earlier_claims())
             except ClassifierError as exc:
                 if exc.retry_after is not None and attempt < self.max_attempts:
                     delay = exc.retry_after * (2 ** (attempt - 1) if exc.exponential else 1)

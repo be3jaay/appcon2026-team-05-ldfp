@@ -35,6 +35,9 @@ uv run pytest -q                 # no API keys or network needed
 | `WEB_SEARCH_MODEL` | `gpt-5-search-api` | OpenAI search-enabled model (Chat Completions + `web_search_options`) |
 | `WEB_SEARCH_MIN_CHECKWORTHINESS` | `0.6` | Paid searches only run for claims at or above this check-worthiness |
 | `WEB_SEARCH_RPM` / `WEB_SEARCH_CACHE_SECONDS` | `10` / `86400` | Pacing and cache for web searches |
+| `WEB_SEARCH_PROVIDERS` | `openai,groq` | Web search providers, tried in order. A provider that rejects its key or runs out of credits is switched off until restart |
+| `WEB_SEARCH_GROQ_MODEL` / `WEB_SEARCH_GROQ_RPM` | `openai/gpt-oss-120b` / `1` (`2` with its own key) | Free fallback: Groq's built-in `browser_search`. ≈7k tokens a search against an 8k tokens/min free tier, so it is paced slowly |
+| `WEB_SEARCH_GROQ_API_KEY` | `GROQ_API_KEY` | A key from a second free Groq account, so searches don't eat detection's per-minute budget (recommended for live demos) |
 | `FACTCHECK_CACHE_SECONDS` | `86400` | Identical fact-check searches are served from memory for this long |
 | `FLOOD_CONTROL_DATA_URL` | BetterGov.ph GitHub raw URL | DPWH flood control dataset (downloaded on first use) |
 | `FLOOD_CONTROL_CACHE_PATH` | `data/sources/flood_control.json` | Local copy (gitignored) |
@@ -130,6 +133,10 @@ Server → client:
 
 The same detection call also returns, per claim, `fallacy` (one of ad_hominem, straw_man, whataboutism, red_herring, false_dilemma, slippery_slope, hasty_generalization, appeal_to_emotion, appeal_to_authority, bandwagon, or null), `evasion` (the speaker answered a question/criticism in the segment or a CONTEXT line without addressing it) and `rhetoric_note` (one sentence quoting the words). Only set when clearly present; ordinary news narration is never flagged; the prompt forbids guessing motives. The frontend shows "Evasive" / fallacy chips on the Current Claim card and in history, and a marker in the transcript.
 
+## Conflicting statements
+
+Each detection call also gets the session's last 12 assertions (fact/legal/promise) as `[E1]…` lines (never extracted). A new claim that clearly conflicts with one of them (same subject, can't both be true: a different figure, did vs did not) gets `contradicts` (the earlier claim's id) and `contradiction_note`. Updates, announced corrections and different subjects are not conflicts. The frontend shows a "Conflicts with earlier" chip that opens the earlier claim, and a short alert over the video.
+
 ## Testing a whole transcript
 
 ```bash
@@ -154,6 +161,7 @@ The detection LLM also returns, per claim, `check_type` (`STATISTICAL | LEGAL | 
 - Only pages the search actually used (the API's `url_citation` annotations) count as sources; URLs the model merely lists are dropped.
 - Every source gets a reliability label: government (`.gov.ph`), fact_checker, news, reference (Wikipedia), other. A factual/misleading verdict with no government/fact-checker/news source is **downgraded to NEEDS_CONTEXT**.
 - The prompt judges the claim only; it does not guess motives (the pdm-test "subtext / hidden agenda" field was deliberately left out).
+- Providers (`WEB_SEARCH_PROVIDERS`): OpenAI first, then Groq `browser_search` (free, same Groq key as detection; its citations are the search results and pages it opened). An out-of-credits 429 (`insufficient_quota`) or a rejected key switches that provider off; a plain rate limit only pauses it. Each verification logs `verify <type> -> <status> via <method>`, and why web search was skipped.
 - Paced (`WEB_SEARCH_RPM`), cached per claim for a day, and skipped for low check-worthiness. Code: `clients/web_search_client.py`, `services/web_search_service.py`. `GET /api/v1/sources/status` reports `web_search`.
 
 **Published fact-checks (fallback).** When our data can't settle a claim (NO_SOURCE or INSUFFICIENT_EVIDENCE) and `FACTCHECK_API_KEY` is set, the claim is searched in Google's Fact Check Tools API (ClaimReview from Rappler, VERA Files, AFP Fact Check, FactRakers and others). The search uses the detector's English `text_en` (sent as `search_text`), because most fact-checks are in English. One LLM call decides which results review the **same** claim. A same-claim result with a clear rating becomes the verdict (method `PUBLISHED_FACT_CHECK`): false/fake/misleading/incorrect → CONTRADICTED, missing context/half true/unproven → NEEDS_CONTEXT, true/accurate → SUPPORTED. Conflicting ratings → NEEDS_CONTEXT. Other results are listed as RELATED evidence and never change the verdict; unmappable ratings (Satire, Explainer…) don't either. Without an LLM, nothing counts as the same claim. Conclusive official-data results never consult fact-checks. Endpoints: `POST /api/v1/fact-checks/search` (`{query, language?}`), `GET /api/v1/sources/status` (`{factcheck, llm}` for the UI's source list). Code: `clients/factcheck_client.py`, `services/factcheck_service.py`, `routes/factcheck_routes.py`.

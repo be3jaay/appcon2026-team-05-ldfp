@@ -74,7 +74,7 @@ async def test_llm_calls_far_below_segment_count():
 
 async def test_context_is_the_two_previous_final_lines_and_never_labelled():
     _, _, llm = await run_session()
-    second = llm.calls[1]["user"].splitlines()
+    second = [line for line in llm.calls[1]["user"].splitlines() if not line.startswith("[E")]
     assert second[0].startswith("[C1]") and "nakakahiya" in second[0]
     assert second[1].startswith("[C2]") and "Noted. Proceed." in second[1]
     assert second[2].startswith("[1] Speaker 3: Itatayo")
@@ -164,7 +164,7 @@ async def test_merge_respects_max_call_segments():
     segs = [seg(i, f"Ang DepEd ay gumastos ng ₱{i}00 milyon noong 2023.", speaker=str(i % 2)) for i in range(1, 8)]
     await detector.process(segs)
     for call in llm.calls:
-        numbered = [line for line in call["user"].splitlines() if not line.startswith("[C")]
+        numbered = [line for line in call["user"].splitlines() if not line.startswith(("[C", "[E"))]
         assert len(numbered) <= 2
     assert llm.call_count == 4  # 7 segments / 2 per call
 
@@ -249,3 +249,16 @@ async def test_overload_backs_off_exponentially_but_explicit_delay_does_not():
     detector = ClaimDetector(ClaimClassifier(FakeLLM(quota, quota, ok)), max_attempts=4, sleep=fake_sleep)
     await detector.process([seg(1, "Ang DepEd ay gumastos ng ₱112 milyon noong 2023.")])
     assert slept == [38, 38]
+
+
+async def test_earlier_assertions_are_sent_but_never_extracted():
+    llm = KeywordFakeLLM()
+    detector = ClaimDetector(ClaimClassifier(llm), max_segments=1, max_wait_s=60, max_call_segments=1)
+    await detector.process([
+        seg(1, "Ang DepEd ay gumastos ng ₱100 milyon noong 2023.", speaker="1"),
+        seg(2, "Ang DepEd ay gumastos ng ₱300 milyon noong 2023.", speaker="2"),
+    ])
+    first, second = (call["user"].splitlines() for call in llm.calls)
+    assert not any(line.startswith("[E") for line in first)
+    earlier = [line for line in second if line.startswith("[E")]
+    assert len(earlier) == 1 and "₱100 milyon" in earlier[0] and "Speaker 1" in earlier[0]

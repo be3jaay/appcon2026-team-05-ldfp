@@ -58,6 +58,15 @@ async def test_reasoning_effort_only_sent_to_reasoning_models():
         (httpx.Response(429, headers={"x-ratelimit-reset-tokens": "1m2.5s"}), 62.5, False),
         (httpx.Response(429, headers={"x-ratelimit-reset-tokens": "697ms"}), 0.697, False),
         (httpx.Response(429), 20.0, True),
+        # A per-minute token limit waits for the token window, not the daily request window.
+        (httpx.Response(429, json={"error": {"message": "Rate limit reached on tokens per minute (TPM)"}},
+                        headers={"x-ratelimit-reset-requests": "25m55s", "x-ratelimit-reset-tokens": "7.5s"}), 7.5, False),
+        # Groq's own "try again in" wins, e.g. for a daily token limit.
+        (httpx.Response(429, json={"error": {"message": "Rate limit reached on tokens per day (TPD): Limit 200000, "
+                                             "Used 199400, Requested 2600. Please try again in 14m24.5s. Need more"}},
+                        headers={"x-ratelimit-reset-tokens": "7.5s"}), 864.5, False),
+        (httpx.Response(429, json={"error": {"message": "Rate limit reached on requests per day (RPD)"}},
+                        headers={"x-ratelimit-reset-requests": "25m", "x-ratelimit-reset-tokens": "7.5s"}), 1500.0, False),
         (httpx.Response(503), 2.0, True),
         (httpx.Response(503, headers={"x-ratelimit-reset-tokens": "30s"}), 2.0, True),  # reset headers only count on 429
         (httpx.Response(400, json={"error": {"code": "json_validate_failed"}}), 2.0, True),
@@ -211,3 +220,10 @@ async def test_output_budget_is_sent():
 
     await client(handler, max_output_tokens=4096).generate("s", "u")
     assert seen[0]["max_tokens"] == 4096
+
+
+async def test_rate_limit_message_is_kept_for_the_logs():
+    response = httpx.Response(429, json={"error": {"message": "Rate limit reached on tokens per minute (TPM)"}})
+    with pytest.raises(RetryableLLMError) as exc:
+        await client(lambda r: response).generate("s", "u")
+    assert "tokens per minute" in str(exc.value)

@@ -92,3 +92,8 @@ def no_real_api_keys(monkeypatch):
 
     for key in ("factcheck_api_key", "openai_api_key"):
         monkeypatch.setattr(settings, key, None)
+    # Web search only through providers a test sets up itself (never the real Groq key).
+    from src.services import web_search_service
+
+    monkeypatch.setattr(settings, "web_search_providers", ("openai",))
+    monkeypatch.setattr(web_search_service, "_providers", {})

@@ -33,7 +33,7 @@ export const VIDEO_COPY = {
   title: "WATCH & TRANSCRIBE",
   transcriptTitle: "TRANSCRIPT",
   statusLive: "Transcribing video audio",
-  statusIdle: "Soniox · EN",
+  statusIdle: "Soniox · TL/EN",
   dropZone: "Drop a video here, or click to choose",
   changeVideo: "Change video",
   youtubePlaceholder: "Paste a YouTube link (video or live)",

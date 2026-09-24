@@ -85,6 +85,9 @@ class Claim(BaseModel):
     fallacy: Fallacy | None = None
     evasion: bool = False
     rhetoric_note: str | None = Field(None, description="One sentence explaining the fallacy/evasion flag.")
+    # Conflict with an earlier claim in the same session (same subject, both can't be true).
+    contradicts: str | None = Field(None, description="Id of the earlier claim this one conflicts with.")
+    contradiction_note: str | None = Field(None, description="One sentence naming both statements.")
 
 
 class SkippedSegment(BaseModel):

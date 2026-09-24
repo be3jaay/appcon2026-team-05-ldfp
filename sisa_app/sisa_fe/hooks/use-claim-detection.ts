@@ -42,6 +42,9 @@ export interface Claim {
   fallacy?: string | null
   evasion?: boolean
   rhetoric_note?: string | null
+  /** Id of an earlier claim in this session that this one conflicts with. */
+  contradicts?: string | null
+  contradiction_note?: string | null
 }
 
 export interface SkippedSegment {

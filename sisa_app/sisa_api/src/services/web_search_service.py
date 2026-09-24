@@ -1,9 +1,10 @@
 """AI web search: the LAST fallback, for claims no data source or published
 fact-check settles (idea from the feat/pdm-test branch, rebuilt with guardrails).
 
-- One search-enabled LLM call per claim, paced and cached (paid API).
-- Only pages the search actually used (url_citation annotations) count as
-  sources; URLs the model merely lists are dropped.
+- One search-enabled LLM call per claim, paced and cached. Providers are tried in
+  order (WEB_SEARCH_PROVIDERS): OpenAI's search model, then Groq browser_search.
+- Only pages the search actually returned (url_citation annotations / Groq search
+  results) count as sources; URLs the model merely lists are dropped.
 - Each source is labelled by reliability (government, fact-checker, news,
   reference, other). A factual/misleading verdict that rests only on weak or
   unverified sources is downgraded to NEEDS_CONTEXT.
@@ -17,7 +18,13 @@ import time
 from dataclasses import dataclass, field
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from ..clients.web_search_client import SearchAnswer, WebSearchClient, WebSearchConfigError, WebSearchError
+from ..clients.web_search_client import (
+    GroqBrowserSearchClient,
+    SearchAnswer,
+    WebSearchClient,
+    WebSearchConfigError,
+    WebSearchError,
+)
 from ..config import settings
 from .claims.rate_limiter import RateLimiter
 
@@ -29,7 +36,9 @@ You fact-check one claim heard in live Philippine public speech, using web searc
 Search for reliable reports about the claim. Prefer, in order: official Philippine government \
 sources (.gov.ph), established fact-checkers, established news organisations. Treat Wikipedia, \
 blogs, forums and social media as weak. Judge the claim exactly as stated, including any \
-amount, date, person or place. Do not guess anyone's motives or intentions.
+amount, date, person or place, but judge the substance: small wording or rounding differences \
+that don't change the meaning are not misleading. Make sure a source describes the same event, \
+not a similar one. Do not guess anyone's motives or intentions.
 
 Verdicts:
 - "factual": reliable sources confirm the claim as stated.
@@ -122,7 +131,8 @@ def interpret(answer: SearchAnswer) -> WebCheck | None:
         return None
     reasoning = str(data.get("reasoning") or "").strip()
     # Strip the model's inline citation markup "([site](url))" from the prose.
-    reasoning = re.sub(r"\s*\(\[[^\]]*\]\([^)]*\)\)", "", reasoning).strip()
+    reasoning = re.sub(r"\s*\(\[[^\]]*\]\([^)]*\)\)", "", reasoning)
+    reasoning = re.sub(r"\s*【[^】]*】", "", reasoning).strip()  # Groq browser citation marks
 
     cited = {normalize_url(c.url): c for c in answer.citations}
     sources: list[WebSource] = []
@@ -168,34 +178,78 @@ class _TTLCache:
         self._data[key] = (time.monotonic(), value)
 
 
-_client: WebSearchClient | None = None
 _cache = _TTLCache(settings.web_search_cache_seconds)
-_limiter = RateLimiter(settings.web_search_rpm)
 
 
-# Set when the API rejects the key or model: stop calling (every call would fail the same way)
-# and report web search as not connected until the server restarts with a working key.
-_disabled_reason: str | None = None
+class _Provider:
+    """One search backend with its own pacing. `disabled` is set when it rejects the key or
+    runs out of credits: stop calling it (every call would fail the same way) until restart."""
+
+    def __init__(self, name: str, make_client, rpm: float):
+        self.name = name
+        self._make_client = make_client
+        self._client = None
+        self.limiter = RateLimiter(rpm)
+        self.disabled: str | None = None
+
+    @property
+    def client(self):
+        if self._client is None:
+            self._client = self._make_client()
+        return self._client
+
+
+def _make_provider(name: str) -> _Provider | None:
+    if name == "openai" and settings.openai_api_key:
+        return _Provider(
+            name,
+            lambda: WebSearchClient(
+                settings.openai_api_key,
+                settings.web_search_model,
+                base_url=settings.openai_base_url,
+                timeout=settings.web_search_timeout_seconds,
+            ),
+            settings.web_search_rpm,
+        )
+    if name == "groq" and settings.web_search_groq_api_key:
+        return _Provider(
+            name,
+            lambda: GroqBrowserSearchClient(
+                settings.web_search_groq_api_key,
+                settings.web_search_groq_model,
+                timeout=settings.web_search_timeout_seconds,
+            ),
+            settings.web_search_groq_rpm,
+        )
+    return None
+
+
+_providers: dict[str, _Provider] = {}
+
+
+def _active() -> list[_Provider]:
+    out = []
+    for name in settings.web_search_providers:
+        if name not in _providers and (made := _make_provider(name)):
+            _providers[name] = made
+        p = _providers.get(name)
+        if p and not p.disabled:
+            out.append(p)
+    return out
 
 
 def is_configured() -> bool:
-    return bool(settings.openai_api_key) and _disabled_reason is None
+    return bool(_active())
 
 
-def get_client() -> WebSearchClient:
-    global _client
-    if _client is None:
-        _client = WebSearchClient(
-            settings.openai_api_key,
-            settings.web_search_model,
-            base_url=settings.openai_base_url,
-            timeout=settings.web_search_timeout_seconds,
-        )
-    return _client
+def status() -> dict[str, str]:
+    """Per provider: "ok", or why it is off (for logs and the sources endpoint)."""
+    _active()
+    return {name: p.disabled or "ok" for name, p in _providers.items()}
 
 
 async def check(claim: str, context: str | None = None) -> WebCheck | None:
-    """None when the search failed or its answer was unusable (the caller keeps its result)."""
+    """None when every search failed or answered unusably (the caller keeps its result)."""
     key = claim.strip().casefold()
     hit = _cache.get(key)
     if hit is not None:
@@ -203,24 +257,25 @@ async def check(claim: str, context: str | None = None) -> WebCheck | None:
     user = f"CLAIM: {claim.strip()}"
     if context:
         user += f"\nSAID IN (transcript, may contain speech-recognition errors): {context.strip()[:1500]}"
-    await _limiter.acquire()
-    try:
-        answer = await get_client().search(SEARCH_PROMPT, user)
-    except WebSearchConfigError as exc:
-        global _disabled_reason
-        _disabled_reason = exc.message
-        logger.error("web search disabled until restart: %s", exc.message)
-        return None
-    except WebSearchError as exc:
-        logger.warning("web search failed: %s", exc.message)
-        if exc.retry_after:
-            _limiter.penalize(exc.retry_after)
-        return None
-    result = interpret(answer)
-    if result is None:
-        logger.warning("web search answer unusable: %.200r", answer.content)
-    else:
-        logger.info("web search: %s via %d sources (%s)", result.verdict, len(result.sources),
-                    ", ".join(s.reliability for s in result.sources))
-    _cache.put(key, result)
-    return result
+    for provider in _active():
+        await provider.limiter.acquire()
+        try:
+            answer = await provider.client.search(SEARCH_PROMPT, user)
+        except WebSearchConfigError as exc:
+            provider.disabled = exc.message
+            logger.error("web search via %s disabled until restart: %s", provider.name, exc.message)
+            continue
+        except WebSearchError as exc:
+            logger.warning("web search via %s failed: %s", provider.name, exc.message)
+            if exc.retry_after:
+                provider.limiter.penalize(exc.retry_after)
+            continue
+        result = interpret(answer)
+        if result is None:
+            logger.warning("web search via %s answer unusable: %.200r", provider.name, answer.content)
+            continue
+        logger.info("web search via %s: %s via %d sources (%s)", provider.name, result.verdict,
+                    len(result.sources), ", ".join(s.reliability for s in result.sources))
+        _cache.put(key, result)
+        return result
+    return None

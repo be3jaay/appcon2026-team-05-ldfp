@@ -48,12 +48,12 @@ export const TRUSTED_SOURCES: TrustedSource[] = [
     name: "AI web search",
     shortName: "the web",
     publisher:
-      "OpenAI search model; government, news and fact-checker pages preferred",
+      "OpenAI search model, or Groq browser search as the free fallback; government, news and fact-checker pages preferred",
     covers:
       "Last resort for claims no other source covers; sources are rated by reliability",
     url: "https://platform.openai.com/docs/guides/tools-web-search",
-    // Real status comes from GET /api/v1/sources/status (needs OPENAI_API_KEY).
-    status: "needs-key",
+    // Real status comes from GET /api/v1/sources/status (needs OPENAI_API_KEY or GROQ_API_KEY).
+    status: "connected",
   },
   {
     id: "gazette",

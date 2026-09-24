@@ -1,28 +1,34 @@
 "use client"
 
-import { useMemo } from "react"
+import { useMemo, useState } from "react"
 
 import { verdictOf } from "@/lib/verification"
+import {
+  downloadFile,
+  exportName,
+  sessionJson,
+  sessionMarkdown,
+} from "@/lib/export"
 import { useClaimFeed } from "@/hooks/use-claim-feed"
+import { useClaimAlerts } from "@/hooks/use-claim-alerts"
+import { useClaimReview } from "@/hooks/use-claim-review"
 import { useClaimVerification } from "@/hooks/use-claim-verification"
 import { useSessionSummary } from "@/hooks/use-session-summary"
 import { useVideoTranscription } from "@/hooks/use-video-transcription"
 import { AppHeader } from "@/components/workspace/app-header"
+import { ClaimAlertOverlay } from "@/components/workspace/claim-alert"
 import {
-  ClaimHistoryBadge,
-  ClaimHistoryList,
-} from "@/components/workspace/claim-history"
-import { CurrentClaim } from "@/components/workspace/current-claim"
+  ClaimsPanel,
+  type ClaimsTab,
+} from "@/components/workspace/claims-panel"
 import { MediaPanel } from "@/components/workspace/media-panel"
 import { SessionSummary } from "@/components/workspace/session-summary"
 import { TranscriptPanel } from "@/components/workspace/transcript-panel"
-import { TrustedSources } from "@/components/workspace/trusted-sources"
 
 /**
- * Desktop: media + transcript on the left; current claim, history and
- * sources in a sticky right column.
- * Mobile: compact media, current claim, history badge (opens a sheet),
- * transcript, then collapsible sources.
+ * Three blocks. Desktop: media and the claims panel on the left, the live
+ * transcript filling the right column; the page itself doesn't scroll.
+ * Mobile: media, claims panel, transcript. Sources sit behind a header button.
  */
 export function Workspace() {
   const session = useVideoTranscription()
@@ -56,53 +62,60 @@ export function Workspace() {
       ),
     [session.claims, verifications]
   )
-  const history = {
-    claims: feed.history,
-    verifications,
-    onSelect: feed.select,
+  const review = useClaimReview(session.claims)
+  const exportSession = (format: "md" | "json") => {
+    const data = {
+      segments: session.segments,
+      claims: session.claims,
+      verifications,
+      reviews: review.reviews,
+    }
+    if (format === "md")
+      downloadFile(exportName("md"), sessionMarkdown(data), "text/markdown")
+    else downloadFile(exportName("json"), sessionJson(data), "application/json")
   }
-
-  const currentClaim = (compact: boolean, className?: string) => (
-    <CurrentClaim
-      claim={feed.current}
-      verifyState={feed.current ? verifications[feed.current.id] : undefined}
-      following={feed.following}
-      pendingCount={feed.pendingCount}
-      onFollowLive={feed.followLive}
-      compact={compact}
-      className={className}
-    />
-  )
+  const [claimsTab, setClaimsTab] = useState<ClaimsTab>("now")
+  const openClaim = (id: string) => {
+    feed.select(id)
+    setClaimsTab("now")
+  }
+  const alerts = useClaimAlerts(session.claims, verdicts)
 
   return (
-    <div className="min-h-svh bg-canvas text-ink">
+    <div className="flex min-h-svh flex-col bg-canvas text-ink lg:h-svh">
       <AppHeader live={session.live} claimCount={session.claims.length} />
 
-      <main className="mx-auto grid max-w-7xl grid-cols-1 gap-3 px-3 py-3 sm:gap-4 sm:px-6 sm:py-5 lg:grid-cols-[minmax(0,1fr)_380px] lg:gap-5">
-        <div className="flex min-w-0 flex-col gap-3 sm:gap-4">
-          <MediaPanel session={session} />
-
-          <div className="flex flex-col gap-3 lg:hidden">
-            {currentClaim(true)}
-            <ClaimHistoryBadge {...history} />
-          </div>
-
-          <TranscriptPanel
+      <main className="mx-auto grid w-full max-w-7xl flex-1 grid-cols-1 content-start gap-3 px-3 py-3 sm:gap-4 sm:px-6 sm:py-4 lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_minmax(360px,420px)] lg:content-stretch lg:gap-5">
+        <div className="flex min-w-0 flex-col gap-3 sm:gap-4 lg:min-h-0 lg:overflow-y-auto">
+          <MediaPanel
             session={session}
-            verdicts={verdicts}
-            className="lg:h-[460px]"
+            actions={<SessionSummary summary={summary} />}
+            overlay={
+              <ClaimAlertOverlay
+                alert={alerts.alert}
+                onOpen={openClaim}
+                onDismiss={alerts.dismiss}
+              />
+            }
           />
-
-          <SessionSummary summary={summary} />
-
-          <TrustedSources collapsible className="lg:hidden" />
+          <ClaimsPanel
+            feed={feed}
+            claims={session.claims}
+            verifications={verifications}
+            review={review}
+            onExport={exportSession}
+            tab={claimsTab}
+            onTabChange={setClaimsTab}
+            className="lg:min-h-[220px] lg:flex-1"
+          />
         </div>
 
-        <aside className="hidden min-h-0 flex-col gap-4 lg:sticky lg:top-5 lg:flex lg:max-h-[calc(100svh-2.5rem)] lg:self-start lg:overflow-y-auto">
-          {currentClaim(false)}
-          <ClaimHistoryList {...history} className="h-[380px] shrink-0" />
-          <TrustedSources className="shrink-0" />
-        </aside>
+        <TranscriptPanel
+          session={session}
+          verdicts={verdicts}
+          onSelectClaim={openClaim}
+          className="lg:h-full"
+        />
       </main>
     </div>
   )

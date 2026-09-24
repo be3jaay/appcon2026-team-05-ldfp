@@ -3,6 +3,7 @@ import json
 import pytest
 
 from src.services.claims.classifier import (
+    RESPONSE_SCHEMA,
     SYSTEM_PROMPT,
     ClaimClassifier,
     ClassifierError,
@@ -319,3 +320,32 @@ def test_prompt_and_schema_cover_rhetoric():
 def test_nested_claims_list_is_flattened_not_dropped():
     raw = json.dumps({"claims": [{"claims": [item(1, "a"), item(2, "b")]}, item(1, "c")]})
     assert [c.text for c in parse_claims(raw, BATCH)] == ["a", "b", "c"]
+
+
+def test_conflict_label_maps_to_the_earlier_claim_id():
+    batch = [seg(1, "Ang DepEd ay gumastos ng ₱300 milyon noong 2023.")]
+    earlier = parse_claims(
+        json.dumps({"claims": [{"segment": 1, "text": "₱100M", "type": "fact"}, {"segment": 1, "text": "₱5M", "type": "fact"}]}),
+        [seg(9, "Ang DepEd ay gumastos ng ₱100 milyon at ₱5 milyon.")],
+    )
+    raw = json.dumps({"claims": [{"segment": 1, "text": "DepEd spent ₱300M in 2023", "type": "fact",
+                                  "contradicts": "E1", "contradiction_note": "Speaker 1 said ₱100M earlier."}]})
+    [claim] = parse_claims(raw, batch, earlier)
+    assert claim.contradicts == earlier[0].id and claim.contradiction_note
+
+
+def test_unknown_conflict_label_is_dropped_with_its_note():
+    batch = [seg(1, "Ang DepEd ay gumastos ng ₱300 milyon noong 2023.")]
+    raw = json.dumps({"claims": [{"segment": 1, "text": "x", "type": "fact", "contradicts": "E7",
+                                  "contradiction_note": "made up"}]})
+    [claim] = parse_claims(raw, batch, [])
+    assert claim.contradicts is None and claim.contradiction_note is None
+
+
+def test_prompt_lists_earlier_claims_before_context():
+    earlier = parse_claims(json.dumps({"claims": [{"segment": 1, "text": "Unemployment is 5%", "text_en": "Unemployment is 5%",
+                                                   "type": "fact"}]}), [seg(3, "Unemployment is 5% now")])
+    prompt = build_user_prompt([seg(1, "Now it is 3%")], [seg(0, "Hello")], earlier)
+    lines = prompt.splitlines()
+    assert lines[0].startswith("[E1] (EARLIER claim") and lines[1].startswith("[C1]") and lines[2].startswith("[1]")
+    assert "contradicts" in SYSTEM_PROMPT and "contradicts" in str(RESPONSE_SCHEMA)

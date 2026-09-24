@@ -9,7 +9,7 @@ import {
   type TrustedSource,
 } from "@/constants/sources"
 import { useSourcesStatus } from "@/hooks/use-sources-status"
-import { Panel, PanelHeader } from "@/components/workspace/panel"
+import { InfoPopover } from "@/components/workspace/popover"
 
 const STATUS_LABEL: Record<SourceStatus, string> = {
   connected: "Connected",
@@ -57,20 +57,14 @@ function SourceRow({ source }: { source: TrustedSource }) {
   )
 }
 
-export function TrustedSources({
-  collapsible = false,
-  className,
-}: {
-  collapsible?: boolean
-  className?: string
-}) {
+function useSources() {
   const live = useSourcesStatus()
   // Sources that depend on a server-side API key show their live status.
   const keyed: Record<string, boolean | undefined> = {
     factcheck: live?.factcheck,
     "web-search": live?.web_search,
   }
-  const sources = TRUSTED_SOURCES.map((s) =>
+  return TRUSTED_SOURCES.map((s) =>
     live && s.id in keyed
       ? {
           ...s,
@@ -78,32 +72,33 @@ export function TrustedSources({
         }
       : s
   )
-  const list = (
-    <ul className="m-0 list-none p-0">
-      {sources.map((s) => (
-        <SourceRow key={s.id} source={s} />
-      ))}
-    </ul>
-  )
+}
 
-  if (collapsible) {
-    return (
-      <Panel className={className}>
-        <details className="group">
-          <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between px-4 text-[11px] font-semibold tracking-[0.12em] text-brand uppercase">
-            Trusted data sources · {TRUSTED_SOURCES.length}
-            <span className="text-ink-faint group-open:rotate-180">⌄</span>
-          </summary>
-          <div className="border-t border-line">{list}</div>
-        </details>
-      </Panel>
-    )
-  }
-
+/** Header button: the sources claims are checked against, with their status. */
+export function SourcesButton() {
+  const sources = useSources()
+  const connected = sources.filter((s) => s.status === "connected").length
   return (
-    <Panel className={className}>
-      <PanelHeader title="Trusted data sources" />
-      {list}
-    </Panel>
+    <InfoPopover
+      label="Trusted data sources"
+      title={`Trusted data sources · ${connected}/${sources.length} connected`}
+      className="w-[360px]"
+      triggerClassName="flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-medium text-white/90 transition-colors hover:bg-white/20"
+      trigger={
+        <>
+          <ShieldCheck className="h-3.5 w-3.5" />
+          <span className="hidden sm:inline">Sources</span>
+          <span className="font-mono text-[10px] text-white/70">
+            {connected}/{sources.length}
+          </span>
+        </>
+      }
+    >
+      <ul className="m-0 max-h-[60svh] list-none overflow-y-auto p-0">
+        {sources.map((s) => (
+          <SourceRow key={s.id} source={s} />
+        ))}
+      </ul>
+    </InfoPopover>
   )
 }

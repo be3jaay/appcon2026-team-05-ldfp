@@ -95,7 +95,7 @@ async def main() -> int:
     rows = []
     for c in detected.claims:
         row = {"segment": c.segment_id, "type": c.type, "check_type": c.check_type, "text": c.text,
-               "fallacy": getattr(c, "fallacy", None), "evasion": getattr(c, "evasion", None),
+               "fallacy": getattr(c, "fallacy", None), "evasion": getattr(c, "evasion", None), "contradicts": c.contradicts,
                "entities": c.entities.model_dump(exclude_none=True) if c.entities else None}
         if is_verifiable(c):
             req = VerifyClaimRequest(
@@ -109,7 +109,8 @@ async def main() -> int:
             row.update(status="(not checked: " + c.type + ")", method="-", explanation="", evidence=0)
         rows.append(row)
         flags = " ".join(x for x in (f"fallacy={row['fallacy']}" if row["fallacy"] else "",
-                                     "EVASION" if row["evasion"] else "") if x)
+                                     "EVASION" if row["evasion"] else "",
+                                     f"CONFLICTS-WITH={row['contradicts']}" if row["contradicts"] else "") if x)
         print(f"[{c.segment_id:>2}] {c.type:10} {c.check_type:11} {row['status']:22} {row['method']:20} "
               f"{c.text[:80]} {flags}", flush=True)
         if row["explanation"]:
