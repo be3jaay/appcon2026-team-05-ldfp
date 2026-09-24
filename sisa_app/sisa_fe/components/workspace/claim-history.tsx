@@ -41,7 +41,7 @@ function Tabs({
   counts: Record<Tab, number>
 }) {
   const tabs: { id: Tab; label: string }[] = [
-    { id: "checks", label: "Fact-checks" },
+    { id: "checks", label: "Checked claims" },
     { id: "other", label: "Other statements" },
   ]
   return (
@@ -84,7 +84,7 @@ function HistoryItems({
     return (
       <p className="m-0 px-4 py-5 text-center text-[13px] text-ink-faint">
         {tab === "checks"
-          ? "Fact-checked claims from this session will be listed here."
+          ? "Claims SISA looked up in its sources (and published fact-checks) will be listed here."
           : "Opinions, promises, sarcasm, figures of speech and vague statements go here."}
       </p>
     )

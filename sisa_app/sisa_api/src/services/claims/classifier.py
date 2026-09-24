@@ -87,8 +87,11 @@ may be labelled; genuine questions are not claims.
 - Greetings, thanks, procedure and filler produce no items.
 - "quote": the exact words from the segment that carry this claim, copied verbatim (same \
 spelling, no paraphrase), as short as possible while still containing the claim.
-- "text": the claim restated as one short, self-contained sentence in the speaker's language, \
-resolving pronouns from context where obvious. Do not add facts that were not said.
+- "text": the claim restated as one short, self-contained sentence in the language the \
+segment is spoken in (English stays English), resolving pronouns from context where obvious. \
+Name the specific thing the claim is about as said in the segment (e.g. "the river dike in \
+San Isidro built by ABC Builders cost ₱150 million", not "the project cost ₱150 million"). Do not \
+add facts that were not said.
 - "text_en": the same claim in English (identical to "text" if already English), used to \
 search English-language sources.
 - "checkworthiness": 0 to 1, how worth fact-checking it is: high (0.7–1) for specific, \
@@ -104,8 +107,11 @@ about a law, the Constitution or an issuance (Republic Act, Executive Order, Pro
 Administrative Order, Memorandum Circular…): that it exists, was signed/issued, or what it says. \
 Otherwise "OTHER". Opinion, promise and vague claims are "OTHER".
 - "entities": the claim's parts as fields; omit or leave empty what the speaker did not say, \
-never guess. STATISTICAL: metric (e.g. "unemployment rate", "flood control project cost", \
-"number of flood control projects"), value (number only, in full units: "₱125 milyon" -> \
+never guess. Take details from anywhere in the same segment, and from CONTEXT lines the claim \
+clearly refers to: when one sentence names the project's place or contractor and a later \
+sentence gives its cost, the cost claim's entities include that place and contractor. \
+STATISTICAL: metric (e.g. "unemployment rate", "total flood control spending", \
+"number of flood control projects", "cost of one project"), value (number only, in full units: "₱125 milyon" -> \
 125000000, "3.9%" -> 3.9), unit ("percent", "pesos", "projects", "persons"…), date (period, \
 e.g. "July 2026" or "2023"), geography (the region, province or city named; "Philippines" only \
 if clearly national), contractor (the company named, if any). LEGAL: document_type (e.g. "Executive Order"), document_number (e.g. "124"), date, subject (what the document is claimed to do or contain, or empty if the claim is only that it exists or was issued).

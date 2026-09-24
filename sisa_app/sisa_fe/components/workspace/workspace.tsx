@@ -25,7 +25,12 @@ import { TrustedSources } from "@/components/workspace/trusted-sources"
 export function Workspace() {
   const session = useVideoTranscription()
   const feed = useClaimFeed(session.claims, session.claimStatus)
-  const verifications = useClaimVerification(session.claims)
+  const segmentText = useMemo(
+    () =>
+      Object.fromEntries(session.segments.map((s) => [String(s.id), s.text])),
+    [session.segments]
+  )
+  const verifications = useClaimVerification(session.claims, segmentText)
   const verdicts = useMemo(
     () =>
       Object.fromEntries(

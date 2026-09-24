@@ -65,7 +65,7 @@ async def verify(
     """`llm` is optional: without it, content claims about a found document stay NEEDS_CONTEXT
     and published fact-checks are only listed as related, never used as the verdict."""
     if req.claim_type == "STATISTICAL":
-        result = await _verify_statistical(req.claim, req.entities)
+        result = await _verify_statistical(req.claim, req.entities, req.context)
     elif req.claim_type == "LEGAL":
         result = await _verify_legal(req.claim, req.entities, llm, rate_limiter)
     else:
@@ -147,7 +147,7 @@ async def _with_published_fact_checks(
 # --- STATISTICAL -> OpenSTAT ------------------------------------------------------
 
 
-async def _verify_statistical(text: str, entities: ClaimEntities) -> VerificationResponse:
+async def _verify_statistical(text: str, entities: ClaimEntities, context: str | None = None) -> VerificationResponse:
     claim = VerifiedClaim(text=text, type="STATISTICAL")
 
     def result(status, explanation, evidence=()):
@@ -155,8 +155,8 @@ async def _verify_statistical(text: str, entities: ClaimEntities) -> Verificatio
             claim=claim, assessment=Assessment(status=status, explanation=explanation), evidence=list(evidence)
         )
 
-    if _is_flood_control(text, entities):
-        return await _verify_flood_control(text, entities)
+    if _is_flood_control(f"{text} {context or ''}", entities):
+        return await _verify_flood_control(text, entities, context)
     if not entities.metric:
         return result("NEEDS_CONTEXT", "The claim does not name which statistic it is about.")
     metric = _METRIC_ALIASES.get(entities.metric.strip().lower(), entities.metric)
@@ -227,10 +227,24 @@ _SCALE = [
 ]
 # Spoken figures are rounded: within 5% supports the claim, beyond 25% contradicts it.
 _CLOSE, _FAR = 0.05, 0.25
+# One project's cost ("the road dike cost ₱289M"): a record within 2% matches when the claim
+# names a place/contractor/year; with no scope at all only a near-exact (0.5%) match counts.
+_PROJECT_MATCH, _PROJECT_MATCH_UNSCOPED = 0.02, 0.005
+# Words that make a peso figure a total rather than one project's cost.
+_AGGREGATE_RE = re.compile(
+    r"total|kabuuan|spending|spent|ginastos|gumastos|allocat|budget|badyet|pondo para|\ball\b|lahat|"
+    r"overall|combined|sum\b|nationwide|buong bansa|napunta",
+    re.I,
+)
+# Words that point at ONE project; a named structure also narrows the matching records.
+_SINGLE_RE = re.compile(
+    r"\b(the|this|that|one|a single) project\b|\bang proyekto\b|\bproyektong ito\b|cost of one project", re.I
+)
+_STRUCTURE_RE = re.compile(r"road dike|dike|revetment|seawall|sea wall|slope protection|river control|esplanade|drainage", re.I)
 
 
 def _is_flood_control(text: str, entities: ClaimEntities) -> bool:
-    return bool(_FLOOD_RE.search(entities.metric or "") or re.search(r"flood control|baha", text, re.I))
+    return bool(_FLOOD_RE.search(entities.metric or "") or _FLOOD_RE.search(text))
 
 
 def _claimed_amount(value: float, unit: str | None, text: str) -> float:
@@ -276,7 +290,7 @@ def _years(date: str | None) -> dict:
     return {"year_from": years[0], "year_to": years[-1]}
 
 
-async def _verify_flood_control(text: str, entities: ClaimEntities) -> VerificationResponse:
+async def _verify_flood_control(text: str, entities: ClaimEntities, context: str | None = None) -> VerificationResponse:
     claim = VerifiedClaim(text=text, type="STATISTICAL")
 
     def result(status, explanation, evidence=(), method="NONE"):
@@ -290,6 +304,18 @@ async def _verify_flood_control(text: str, entities: ClaimEntities) -> Verificat
         projects = await flood_control_service.load_projects()
     except flood_control_service.FloodControlDataError as exc:
         return result("ERROR", exc.message)
+
+    # The detector sometimes drops the place or contractor named elsewhere in the same line;
+    # recover them from names that actually appear in the DPWH records.
+    words = f"{text} {context or ''}"
+    national = not entities.geography or entities.geography.strip().lower() in ("philippines", "the philippines", "ph")
+    recovered = {}
+    if national and (place := flood_control_service.places_in_text(words, projects)):
+        recovered["geography"] = place
+    if not entities.contractor and (company := flood_control_service.contractor_in_text(words, projects)):
+        recovered["contractor"] = company
+    if recovered:
+        entities = entities.model_copy(update=recovered)
 
     filters = flood_control_service.filters_for_geography(entities.geography, projects)
     if filters is None:
@@ -348,7 +374,27 @@ async def _verify_flood_control(text: str, entities: ClaimEntities) -> Verificat
 
     claimed = _claimed_amount(entities.value, entities.unit, text) if is_amount else entities.value
     claimed_shown = _peso(claimed) if is_amount else f"{claimed:,.0f}"
+    currency_note = ""
+    if is_amount and re.search(r"dollar|usd|\$", f"{entities.unit or ''} {text}", re.I):
+        currency_note = (
+            " The claim says dollars, but DPWH contract costs are in pesos (the transcript may have "
+            "misheard '₱'), so it was compared in pesos."
+        )
     gap = abs(claimed - actual) / actual if actual else float("inf")
+
+    # "The project cost ₱289M" is about ONE project: match individual records.
+    about = f"{entities.metric or ''} {text}"
+    single = _SINGLE_RE.search(about) or _STRUCTURE_RE.search(f"{about} {context or ''}")
+    # A claim about ONE project is never compared with a total (two ₱250M dikes are not one ₱500M dike).
+    if is_amount and single and not _AGGREGATE_RE.search(about):
+        candidates = flood_control_service.apply_filters(projects, filters)
+        structure = _STRUCTURE_RE.search(about) or _STRUCTURE_RE.search(context or "")
+        if structure:
+            word = structure.group(0).lower()
+            named = [p for p in candidates if word in f"{p.description} {p.type_of_work}".lower()]
+            candidates = named or candidates
+        return _single_project_result(claim, claimed, candidates, filters, scope, currency_note)
+
     if gap <= _CLOSE:
         status, verdict = "SUPPORTED", "which matches"
     elif gap <= _FAR:
@@ -360,9 +406,83 @@ async def _verify_flood_control(text: str, entities: ClaimEntities) -> Verificat
     note = " Totals are contract costs of projects listed in the DPWH flood control map." if is_amount else ""
     return result(
         status,
-        f"The claim says {claimed_shown}; DPWH flood control records show {shown} {scope}, {verdict}.{note}",
+        f"The claim says {claimed_shown}; DPWH flood control records show {shown} {scope}, {verdict}.{note}{currency_note}",
         [evidence],
         "OFFICIAL_DATA",
+    )
+
+
+def _project_evidence(p) -> EvidenceItem:
+    place = ", ".join(x for x in (p.municipality, p.province) if x)
+    return EvidenceItem(
+        source=EvidenceSource(
+            name=FLOOD_CONTROL_SOURCE_NAME,
+            publisher=FLOOD_CONTROL_PUBLISHER,
+            source_type="GOVERNMENT_DATASET",
+            url=FLOOD_CONTROL_PAGE_URL,
+            title=p.description or "Flood control project",
+            dataset="DPWH flood control project map (2018-2025)",
+        ),
+        data=EvidenceData(
+            value=p.contract_cost,
+            unit="pesos",
+            period=str(p.funding_year) if p.funding_year else None,
+            geography=place or None,
+            relevant_text=(
+                f"Contract {p.contract_id or '?'} · {p.type_of_work or 'flood control'} · {place or 'location n/a'} · "
+                f"contractor {p.contractor or 'n/a'} · funded {p.funding_year or 'n/a'} · "
+                f"contract cost {_peso(p.contract_cost or 0)} (approved budget {_peso(p.approved_budget or 0)})"
+                + (f" · completed {p.completion_date}" if p.completion_date else "")
+            ),
+        ),
+        relevance="DIRECT",
+    )
+
+
+def _single_project_result(claim, claimed: float, candidates, filters, scope: str, currency_note: str):
+    """Match a claimed single-project cost against individual contract records."""
+    scoped = any([filters.region, filters.province, filters.municipality, filters.legislative_district,
+                  filters.contractor, filters.year, filters.year_from, filters.year_to])
+    tolerance = _PROJECT_MATCH if scoped else _PROJECT_MATCH_UNSCOPED
+    close = sorted(
+        (p for p in candidates if p.contract_cost and abs(p.contract_cost - claimed) / p.contract_cost <= tolerance),
+        key=lambda p: abs(p.contract_cost - claimed),
+    )
+    if close:
+        best = close[0]
+        where = ", ".join(x for x in (best.municipality, best.province) if x)
+        found = (
+            f"A DPWH flood control record {scope} matches: “{best.description}” ({where}; contractor "
+            f"{best.contractor}; funded {best.funding_year}) with a contract cost of {_peso(best.contract_cost)}"
+        )
+        if len(close) > 1:
+            found += f", and {len(close) - 1} other record{'s' if len(close) > 2 else ''} with a similar cost"
+        if scoped:
+            status, explanation = "SUPPORTED", f"{found}. The claim says {_peso(claimed)}."
+        else:
+            status = "NEEDS_CONTEXT"
+            explanation = (
+                f"{found}. The claim says {_peso(claimed)}, but it didn't name the place or contractor, so it "
+                "can't be confirmed as the same project."
+            )
+        return VerificationResponse(
+            claim=claim,
+            assessment=Assessment(status=status, explanation=explanation + currency_note, method="OFFICIAL_DATA"),
+            evidence=[_project_evidence(p) for p in close[:_MAX_EVIDENCE]],
+        )
+
+    nearest = sorted((p for p in candidates if p.contract_cost), key=lambda p: abs(p.contract_cost - claimed))[:1]
+    explanation = f"No single DPWH flood control record {scope} has a contract cost near {_peso(claimed)}."
+    if nearest:
+        explanation += f" The closest is {_peso(nearest[0].contract_cost)} (“{nearest[0].description}”)."
+    return VerificationResponse(
+        claim=claim,
+        assessment=Assessment(
+            status="INSUFFICIENT_EVIDENCE",
+            explanation=explanation + " The records may not list every project." + currency_note,
+            method="OFFICIAL_DATA",
+        ),
+        evidence=[_project_evidence(p) for p in nearest],
     )
 
 

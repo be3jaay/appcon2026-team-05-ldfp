@@ -13,13 +13,21 @@ import type { Claim } from "@/hooks/use-claim-detection"
 const VERIFY_URL = `${apiBaseUrl}/api/v1/claims/verify`
 const MAX_CLAIM_LENGTH = 500
 
-async function verify(claim: Claim): Promise<VerificationResult> {
+const MAX_CONTEXT_LENGTH = 3000
+
+async function verify(
+  claim: Claim,
+  context?: string
+): Promise<VerificationResult> {
   const res = await fetch(VERIFY_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       claim: claim.text.slice(0, MAX_CLAIM_LENGTH),
       search_text: claim.text_en?.slice(0, MAX_CLAIM_LENGTH) ?? null,
+      // The transcript line the claim came from: lets the backend recover details
+      // (place, contractor) the claim's own text left out.
+      context: context?.trim().slice(0, MAX_CONTEXT_LENGTH) || null,
       claim_type: claim.check_type,
       entities: claim.entities ?? {},
     }),
@@ -38,7 +46,16 @@ async function verify(claim: Claim): Promise<VerificationResult> {
  * time (the backend paces its own LLM and source calls). Results are keyed
  * by claim id and reset when a new session starts.
  */
-export function useClaimVerification(claims: Claim[]) {
+export function useClaimVerification(
+  claims: Claim[],
+  segmentText: Record<string, string> = {}
+) {
+  // Read at request time, so the latest text of each segment is sent.
+  const segmentTextRef = useRef(segmentText)
+  useEffect(() => {
+    segmentTextRef.current = segmentText
+  }, [segmentText])
+
   const [byId, setById] = useState<Record<string, VerifyState>>({})
   const queuedRef = useRef<Set<string>>(new Set())
   // Each queued claim remembers its session, because claim ids restart per session.
@@ -78,7 +95,13 @@ export function useClaimVerification(claims: Claim[]) {
         const { claim, session } = queueRef.current.shift()!
         let outcome: VerifyState
         try {
-          outcome = { state: "done", result: await verify(claim) }
+          outcome = {
+            state: "done",
+            result: await verify(
+              claim,
+              segmentTextRef.current[claim.segment_id]
+            ),
+          }
         } catch (err) {
           outcome = {
             state: "failed",

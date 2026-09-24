@@ -41,6 +41,9 @@ class VerifyClaimRequest(BaseModel):
     )
     claim_type: CheckType
     entities: ClaimEntities = ClaimEntities()
+    context: str | None = Field(
+        None, max_length=3000, description="The transcript segment the claim came from (fills in details the claim text left out)."
+    )
 
 
 class VerifiedClaim(BaseModel):

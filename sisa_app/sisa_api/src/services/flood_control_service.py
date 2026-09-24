@@ -197,6 +197,52 @@ def resolve_region(text: str) -> str | None:
     return None
 
 
+# Generic words that don't identify a contractor on their own.
+_GENERIC_CONTRACTOR_WORDS = frozenset(
+    "construction constructions builders builder corporation corp inc incorporated company co general gen "
+    "contractor contractors development developers enterprises enterprise trading supply supplies services "
+    "engineering and the of phil philippines formerly jv joint venture".split()
+)
+
+
+def contractor_keywords(projects: list[FloodControlProject]) -> dict[str, str]:
+    """Distinctive first word of each contractor name -> that word, e.g. 'sunwest'.
+    Only words of 5+ letters that aren't generic company words."""
+    place_words = {w for p in projects for field in (p.province, p.municipality, p.region) for w in _words(field)}
+    keys: dict[str, str] = {}
+    for p in projects:
+        words = _words(p.contractor)
+        if (
+            words
+            and len(words[0]) >= 5
+            and words[0] not in _GENERIC_CONTRACTOR_WORDS
+            and words[0] not in place_words  # firms named "ORIENTAL ...", "BULACAN ..." would match places
+        ):
+            keys[words[0]] = words[0]
+    return keys
+
+
+def places_in_text(text: str, projects: list[FloodControlProject]) -> str | None:
+    """A province (preferred) or region named in the text, as it appears in the data."""
+    haystack = " ".join(_words(text))
+    provinces = sorted({p.province for p in projects if p.province}, key=len, reverse=True)
+    for province in provinces:
+        if f" {' '.join(_words(province))} " in f" {haystack} ":
+            return province
+    for alias, region in sorted(_REGION_BY_ALIAS.items(), key=lambda kv: len(kv[0]), reverse=True):
+        if len(alias) > 3 and f" {alias} " in f" {haystack} ":
+            return region
+    return None
+
+
+def contractor_in_text(text: str, projects: list[FloodControlProject]) -> str | None:
+    words = set(_words(text))
+    for key in contractor_keywords(projects):
+        if key in words:
+            return key
+    return None
+
+
 def filters_for_geography(geography: str | None, projects: list[FloodControlProject]) -> FloodControlFilters | None:
     """Map a place name to filters: {} for national, None if the place isn't in the data.
     Tries region, then province, then municipality/city, then legislative district."""
