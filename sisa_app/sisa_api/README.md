@@ -13,7 +13,7 @@ uv run pytest -q                 # no API keys or network needed
 | Variable | Default | Purpose |
 |---|---|---|
 | `SONIOX_API_KEY` | none | Mints temporary Soniox keys for the browser |
-| `CORS_ALLOW_ORIGINS` | `http://localhost:3000` | Comma-separated browser origins allowed to call the API and open websockets |
+| `CORS_ALLOW_ORIGINS` | `http://localhost:3000,https://sisa-app-ten.vercel.app` | Comma-separated browser origins allowed to call the API and open websockets |
 | `GROQ_API_KEY` | none | Groq (free tier). With this set, the chain is Groq → Gemini |
 | `GROQ_MODEL` | `openai/gpt-oss-120b` | Groq model id. If it's retired, the error lists Groq's current models |
 | `CEREBRAS_API_KEY` / `CEREBRAS_MODEL` | none / `llama-3.3-70b` | Optional extra provider (OpenAI-compatible) |

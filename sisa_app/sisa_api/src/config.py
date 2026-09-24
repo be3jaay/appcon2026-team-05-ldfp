@@ -23,7 +23,7 @@ class Settings:
     # Browser origins allowed to call the API (CORS) and open websockets.
     # Comma-separated, e.g. "http://localhost:3000,https://sisa.example.com".
     cors_allow_origins: list[str] = _csv(
-        os.environ.get("CORS_ALLOW_ORIGINS", "http://localhost:3000")
+        os.environ.get("CORS_ALLOW_ORIGINS", "http://localhost:3000,https://sisa-app-ten.vercel.app")
     )
 
     # PSA OpenSTAT PXWeb API. GET returns table metadata, POST runs a query.

@@ -50,7 +50,7 @@ Three blocks: media (with claim alerts over the video) and the Claims panel (Now
 
 ## Security
 
-- `CORS_ALLOW_ORIGINS` (default `http://localhost:3000`) is the allowlist for CORS, for `/api/soniox/temporary-key` (403 otherwise), and for the claims websocket (closed with 1008 otherwise). Don't go back to `*`.
+- `CORS_ALLOW_ORIGINS` (default `http://localhost:3000,https://sisa-app-ten.vercel.app`) is the allowlist for CORS, for `/api/soniox/temporary-key` (403 otherwise), and for the claims websocket (closed with 1008 otherwise). Don't go back to `*`.
 
 ## Conventions
 
