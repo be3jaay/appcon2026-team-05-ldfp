@@ -9,7 +9,7 @@ export interface TrustedSource {
   status: SourceStatus
 }
 
-/** Official sources claims are checked against. OpenSTAT and the Official Gazette are wired up. */
+/** Sources claims are checked against. OpenSTAT, the Official Gazette and the DPWH flood control records are wired up. */
 export const TRUSTED_SOURCES: TrustedSource[] = [
   {
     id: "psa",
@@ -17,6 +17,15 @@ export const TRUSTED_SOURCES: TrustedSource[] = [
     publisher: "Philippine Statistics Authority",
     covers: "Employment, prices, population, poverty",
     url: "https://openstat.psa.gov.ph",
+    status: "connected",
+  },
+  {
+    id: "flood-control",
+    name: "DPWH Flood Control Projects",
+    publisher: "DPWH data, compiled by BetterGov.ph",
+    covers:
+      "9,855 flood control contracts, 2018–2025: cost, contractor, location",
+    url: "https://github.com/bettergovph/bettergov/tree/main/src/data/flood_control",
     status: "connected",
   },
   {

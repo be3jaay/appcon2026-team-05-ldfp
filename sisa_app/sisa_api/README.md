@@ -1,6 +1,6 @@
 # sisa_api
 
-FastAPI backend: Soniox temporary keys, live **claim detection**, and **claim verification** against official sources (PSA OpenSTAT, Official Gazette).
+FastAPI backend: Soniox temporary keys, live **claim detection**, and **claim verification** against official sources (PSA OpenSTAT, Official Gazette, DPWH flood control records).
 
 ```bash
 uv sync
@@ -29,6 +29,9 @@ uv run pytest -q                 # no API keys or network needed
 | `CLAIMS_LLM_MAX_ATTEMPTS` | `4` | Attempts per batch when every provider is busy. Uses the provider's retry delay, or 5 s/10 s/20 s backoff |
 | `CLAIMS_MAX_SEGMENTS_PER_CALL` | `8` | Batches that queue while waiting for a call slot are merged into one call, up to this size |
 | `LOG_LEVEL` | `INFO` | Backend log level (`DEBUG` for more) |
+| `FLOOD_CONTROL_DATA_URL` | BetterGov.ph GitHub raw URL | DPWH flood control dataset (downloaded on first use) |
+| `FLOOD_CONTROL_CACHE_PATH` | `data/sources/flood_control.json` | Local copy (gitignored) |
+| `FLOOD_CONTROL_MAX_AGE_HOURS` | `168` | Re-download when the local copy is older than this; a failed download falls back to the old copy |
 | `OFFICIAL_GAZETTE_BASE_URL` | `https://www.officialgazette.gov.ph` | Official Gazette site |
 | `OFFICIAL_GAZETTE_RPM` | `30` | Max requests/min to the Official Gazette from this process |
 | `OFFICIAL_GAZETTE_CACHE_SECONDS` | `600` | Identical searches are served from memory for this long |
@@ -122,7 +125,8 @@ The detection LLM also returns, per claim, `check_type` (`STATISTICAL | LEGAL | 
 
 | check_type | Source | What it can conclude |
 |---|---|---|
-| `STATISTICAL` | PSA OpenSTAT (existing `openstat_service`, unchanged) | SUPPORTED / CONTRADICTED against the published figure. Only the **unemployment rate** is connected so far |
+| `STATISTICAL`, flood control | DPWH flood control project records (via BetterGov.ph) | Totals/counts computed from the records for the place, year(s) and contractor named. Within 5% → SUPPORTED, 5–25% off → NEEDS_CONTEXT, more → CONTRADICTED. Unknown place / no rows → INSUFFICIENT_EVIDENCE |
+| `STATISTICAL`, other | PSA OpenSTAT (existing `openstat_service`, unchanged) | SUPPORTED / CONTRADICTED against the published figure. Only the **unemployment rate** is connected so far |
 | `LEGAL` | Official Gazette search | Existence/issuance claims ("EO 124 was issued"): SUPPORTED when the document is found. Content claims ("EO 124 reorganized DPWH"): one LLM call compares the claim with the official excerpt, giving SUPPORTED / CONTRADICTED, or NEEDS_CONTEXT if the excerpt doesn't settle it. Not found is INSUFFICIENT_EVIDENCE, never CONTRADICTED |
 | `OTHER` | none yet | INSUFFICIENT_EVIDENCE |
 
@@ -142,6 +146,15 @@ The detection LLM also returns, per claim, `check_type` (`STATISTICAL | LEGAL | 
    "relevance": "DIRECT"}]}
 ```
 Statistical claims return `source_type: "OFFICIAL_STATISTICS"` evidence with `value`, `unit`, `period`, `geography`. Source failures come back as `status: "ERROR"` with an explanation (HTTP 200), so the UI can show them next to the claim.
+
+## DPWH flood control projects (via BetterGov.ph)
+
+Source: `bettergovph/bettergov` → `src/data/flood_control/flood_control.json` (CC0). It is an ArcGIS export of the DPWH flood control project map (`Creator: dpwh_view`): **9,855 contract records** (one row per contract / project component), funding years 2018–2025, 16 regions (**no BARMM rows**), with region, province, municipality, legislative district, district engineering office, contractor, approved budget (ABC), contract cost, dates and coordinates. It is a **compiled copy of DPWH data, not an official DPWH release**, and evidence says so.
+
+- `GET /api/v1/flood-control/summary?year=&year_from=&year_to=&region=&province=&municipality=&legislative_district=&contractor=&type_of_work=` returns the record count, total contract cost, total approved budget, totals per year, and the top 5 contractors by cost. Regions accept spoken names ("Central Luzon", "NCR", "region 3").
+- `GET /api/v1/flood-control/projects?…&limit=50` returns matching records, largest contract first.
+- Verification: STATISTICAL claims whose metric mentions flood control (or baha, dike, revetment, drainage…) are routed here instead of OpenSTAT. The detector's `entities` give the place (`geography`), year or range (`date`: "2023", "2018-2025", "mula 2018 hanggang 2025"), `contractor`, and `value`/`unit`. A peso amount is compared with the total contract cost; a count is compared with the number of records. Spoken scales are handled ("₱547 bilyon").
+- Code: `clients/bettergov_client.py` (download), `services/flood_control_service.py` (load/cache, parse, filters, totals), `routes/flood_control_routes.py`, `controllers/flood_control_controller.py`, `models/flood_control.py`.
 
 ## Official Gazette
 
@@ -163,6 +176,7 @@ Statistical claims return `source_type: "OFFICIAL_STATISTICS"` evidence with `va
 - `test_llm_providers.py`: OpenAI-compatible client (request shape, 429/503/timeout/bad key/retired model) and the fallback chain (fallback, cooldowns, all-busy)
 - `test_official_gazette.py`: feed parsing on **real captured responses** (`tests/fixtures/official_gazette/`), Cloudflare challenge/WAF detection, URL validation, HTTP errors, relevance, caching, document fallback, routes
 - `test_claim_verification.py`: STATISTICAL→OpenSTAT and LEGAL→Official Gazette routing and the conservative assessments
+- `test_flood_control.py`: parsing, place/region/contractor/year-range filters, totals, disk cache and download fallback, routes, and flood control claim verification, all on **19 real records** (`tests/fixtures/flood_control/sample.json`)
 - `test_claims_ws.py`: websocket route, rejection of foreign origins, no LLM key configured
 - `test_eval_dataset.py`: eval file shape, and the prefilter never drops a labelled claim
 
@@ -190,3 +204,4 @@ Reads `data/eval/claim_detection.json`, which you can edit: `expected` lists one
 - Content claims about a found document ("EO 124 reorganized DPWH") are judged by one LLM call against the Official Gazette excerpt only (`services/evidence_judge.py`, method `AI_COMPARISON`). It can miss details that are beyond the opening text; those stay NEEDS_CONTEXT.
 - Official Gazette: only the feed is reachable, so evidence text is the site's **opening excerpt**, not the full document. Search results are the site's own (WordPress) ranking, 10 per page. "1987 Constitution" finds documents that cite it, not the Constitution page itself.
 - OpenSTAT verification covers the unemployment rate only.
+- Flood control figures are **contract costs of the projects listed in the DPWH map**, not total appropriations or disbursements; BARMM is missing and some projects may not be listed. "Project records" are contract rows, so one project with several components counts more than once.

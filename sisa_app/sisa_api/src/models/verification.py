@@ -6,7 +6,7 @@ from .claims import CheckType, ClaimEntities
 from .openstat import VerificationStatus
 
 VerifiedClaimType = Literal["STATISTICAL", "LEGAL_ISSUANCE", "OTHER"]
-SourceType = Literal["OFFICIAL_STATISTICS", "OFFICIAL_DOCUMENT"]
+SourceType = Literal["OFFICIAL_STATISTICS", "OFFICIAL_DOCUMENT", "GOVERNMENT_DATASET"]
 
 
 class VerifyClaimRequest(BaseModel):

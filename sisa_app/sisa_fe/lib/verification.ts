@@ -15,7 +15,8 @@ export interface EvidenceItem {
   source: {
     name: string
     publisher: string
-    source_type: "OFFICIAL_STATISTICS" | "OFFICIAL_DOCUMENT"
+    source_type:
+      "OFFICIAL_STATISTICS" | "OFFICIAL_DOCUMENT" | "GOVERNMENT_DATASET"
     url: string
     title: string | null
     date: string | null
@@ -131,7 +132,7 @@ export const STATEMENT_KIND: Partial<Record<ClaimType, string>> = {
 }
 
 export const METHOD_NOTE: Record<AssessmentMethod, string | null> = {
-  OFFICIAL_DATA: "Compared with the published official figure.",
+  OFFICIAL_DATA: "Compared with the published official figure or records.",
   DOCUMENT_MATCH: "Matched against Official Gazette records.",
   AI_COMPARISON:
     "AI compared the claim with the official text shown below. Check the source.",

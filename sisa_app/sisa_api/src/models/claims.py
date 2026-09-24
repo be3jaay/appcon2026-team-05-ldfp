@@ -24,6 +24,7 @@ class ClaimEntities(BaseModel):
     value: float | None = None
     unit: str | None = Field(None, examples=["percent"])
     geography: str | None = Field(None, examples=["Philippines"])
+    contractor: str | None = Field(None, description="Company named in a claim about government contracts.")
     # LEGAL
     document_type: str | None = Field(None, examples=["Executive Order"])
     document_number: str | None = Field(None, examples=["124"])

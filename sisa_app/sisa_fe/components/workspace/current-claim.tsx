@@ -21,12 +21,32 @@ export function claimTime(claim: Claim) {
   return claim.timestamp !== null ? formatTime(claim.timestamp / 1000) : null
 }
 
+function formatPesos(amount: number) {
+  for (const [size, suffix] of [
+    [1e9, "B"],
+    [1e6, "M"],
+  ] as const) {
+    if (Math.abs(amount) >= size)
+      return `₱${(amount / size).toLocaleString(undefined, { maximumFractionDigits: 2 })}${suffix}`
+  }
+  return `₱${amount.toLocaleString()}`
+}
+
 function formatValue(data: EvidenceItem["data"]) {
   if (data.value === null) return null
-  const unit = data.unit === "percent" ? "%" : data.unit ? ` ${data.unit}` : ""
-  return [`${data.value.toLocaleString()}${unit}`, data.period, data.geography]
-    .filter(Boolean)
-    .join(" · ")
+  let value: string
+  if (data.unit === "pesos") value = formatPesos(data.value)
+  else if (data.unit === "percent") value = `${data.value.toLocaleString()}%`
+  else if (data.unit === "projects")
+    value = `${data.value.toLocaleString()} project records`
+  else
+    value = `${data.value.toLocaleString()}${data.unit ? ` ${data.unit}` : ""}`
+  // Flood control evidence repeats the scope in `geography`; the title already says it.
+  const extra =
+    data.unit === "pesos" || data.unit === "projects"
+      ? []
+      : [data.period, data.geography]
+  return [value, ...extra].filter(Boolean).join(" · ")
 }
 
 function EvidenceCard({ item }: { item: EvidenceItem }) {

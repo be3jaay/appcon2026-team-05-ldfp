@@ -95,8 +95,18 @@ opinion, promise and vague.
 - "reason": one short English sentence explaining the label.
 - "literal_claim": for figurative and sarcasm, the plain checkable claim, or "" if there is \
 none; for other types, "".
-- "check_type": which official source could check it. "STATISTICAL" for official statistics (rates, counts, prices, population, GDP, poverty, budgets as published figures). "LEGAL" for claims about a law, the Constitution or an issuance (Republic Act, Executive Order, Proclamation, Administrative Order, Memorandum Circular…): that it exists, was signed/issued, or what it says. Otherwise "OTHER". Opinion, promise and vague claims are "OTHER".
-- "entities": the claim's parts as fields; omit or leave empty what the speaker did not say, never guess. STATISTICAL: metric (e.g. "unemployment rate"), value (number only), unit ("percent", "pesos", "persons"…), date (period, e.g. "July 2026"), geography (default "Philippines" only if clearly national). LEGAL: document_type (e.g. "Executive Order"), document_number (e.g. "124"), date, subject (what the document is claimed to do or contain, or empty if the claim is only that it exists or was issued).
+- "check_type": which official source could check it. "STATISTICAL" for official \
+statistics and government spending records (rates, counts, prices, population, GDP, poverty, \
+budgets, amounts spent on or number of government projects and contracts). "LEGAL" for claims \
+about a law, the Constitution or an issuance (Republic Act, Executive Order, Proclamation, \
+Administrative Order, Memorandum Circular…): that it exists, was signed/issued, or what it says. \
+Otherwise "OTHER". Opinion, promise and vague claims are "OTHER".
+- "entities": the claim's parts as fields; omit or leave empty what the speaker did not say, \
+never guess. STATISTICAL: metric (e.g. "unemployment rate", "flood control project cost", \
+"number of flood control projects"), value (number only, in full units: "₱125 milyon" -> \
+125000000, "3.9%" -> 3.9), unit ("percent", "pesos", "projects", "persons"…), date (period, \
+e.g. "July 2026" or "2023"), geography (the region, province or city named; "Philippines" only \
+if clearly national), contractor (the company named, if any). LEGAL: document_type (e.g. "Executive Order"), document_number (e.g. "124"), date, subject (what the document is claimed to do or contain, or empty if the claim is only that it exists or was issued).
 - Do not judge whether a claim is true. Only detect and label.
 
 Return ONLY JSON of this shape:
@@ -130,6 +140,7 @@ RESPONSE_SCHEMA: dict[str, Any] = {
                             "unit": {"type": "string"},
                             "date": {"type": "string"},
                             "geography": {"type": "string"},
+                            "contractor": {"type": "string"},
                             "document_type": {"type": "string"},
                             "document_number": {"type": "string"},
                             "subject": {"type": "string"},
@@ -145,7 +156,7 @@ RESPONSE_SCHEMA: dict[str, Any] = {
 
 _ROUTABLE = frozenset({"fact", "legal", "figurative", "sarcasm"})
 _ENTITY_FIELDS = {
-    "STATISTICAL": {"metric", "value", "unit", "date", "geography"},
+    "STATISTICAL": {"metric", "value", "unit", "date", "geography", "contractor"},
     "LEGAL": {"document_type", "document_number", "subject", "date"},
     "OTHER": set(),
 }

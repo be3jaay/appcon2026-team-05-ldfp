@@ -30,6 +30,16 @@ class Settings:
     )
     openstat_timeout_seconds: float = 15.0
 
+    # DPWH flood control projects, compiled by BetterGov.ph (CC0). Downloaded on first use
+    # and cached on disk; refreshed when older than the max age.
+    flood_control_data_url: str = os.environ.get(
+        "FLOOD_CONTROL_DATA_URL",
+        "https://raw.githubusercontent.com/bettergovph/bettergov/refs/heads/main/src/data/flood_control/flood_control.json",
+    )
+    flood_control_cache_path: str = os.environ.get("FLOOD_CONTROL_CACHE_PATH", "data/sources/flood_control.json")
+    flood_control_max_age_hours: float = float(os.environ.get("FLOOD_CONTROL_MAX_AGE_HOURS", "168"))
+    flood_control_timeout_seconds: float = float(os.environ.get("FLOOD_CONTROL_TIMEOUT_SECONDS", "120"))
+
     # Official Gazette (primary source for laws and executive issuances).
     # Search uses the site's own WordPress search delivered as RSS (/feed/?s=...);
     # HTML pages sit behind a Cloudflare challenge and usually cannot be fetched.
