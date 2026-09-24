@@ -9,6 +9,8 @@ class Settings:
     soniox_api_key: str | None = os.environ.get("SONIOX_API_KEY") or None
     soniox_temporary_key_url: str = "https://api.soniox.com/v1/auth/temporary-api-key"
 
+    openai_api_key: str | None = os.environ.get("OPENAI_API_KEY") or None
+
     # PSA OpenSTAT PXWeb API. GET returns table metadata, POST runs a query.
     # Table: Labor Force Survey > "Rates Key Employment Indicators".
     openstat_unemployment_url: str = os.environ.get(
